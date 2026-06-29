@@ -193,13 +193,13 @@ _FXSTREET_HEADERS = {
 
 def fetch_economic_calendar() -> Dict:
     today    = date.today()
-    mon      = today - timedelta(days=today.weekday())
-    next_sun = mon + timedelta(days=13)
-    next_mon = mon + timedelta(days=7)
+    this_mon = today - timedelta(days=today.weekday())   # Monday of current week
+    last_mon = this_mon - timedelta(days=7)              # Monday of last week
+    this_sun = this_mon + timedelta(days=6)              # Sunday of current week
 
     url = (
         f"https://calendar-api.fxstreet.com/en/api/v1/eventDates"
-        f"/{mon.isoformat()}/{next_sun.isoformat()}"
+        f"/{last_mon.isoformat()}/{this_sun.isoformat()}"
     )
     try:
         r = requests.get(url, headers=_FXSTREET_HEADERS, timeout=20)
@@ -216,9 +216,9 @@ def fetch_economic_calendar() -> Dict:
     ]
     high.sort(key=lambda e: e.get("dateUtc", ""))
 
-    this_week = [e for e in high if e.get("dateUtc", "") <  next_mon.isoformat()]
-    next_week = [e for e in high if e.get("dateUtc", "") >= next_mon.isoformat()]
-    return {"this_week": this_week, "next_week": next_week}
+    last_week = [e for e in high if e.get("dateUtc", "") <  this_mon.isoformat()]
+    this_week = [e for e in high if e.get("dateUtc", "") >= this_mon.isoformat()]
+    return {"this_week": last_week, "next_week": this_week}
 
 # ── Main entry point ───────────────────────────────────────────────────────
 
