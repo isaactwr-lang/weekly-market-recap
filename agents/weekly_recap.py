@@ -1,9 +1,12 @@
 """Weekly market recap agent.
 
-Every Friday at 11:59 AM SGT:
-  1. Scrape the T. Rowe Price Global Markets Weekly Update
-  2. Summarise with Claude (claude-haiku)
-  3. Fetch live market data (indices, fixed income, currencies)
+Every Monday at 9 AM SGT:
+  1. Scrape T. Rowe Price, Edward Jones, and Charles Schwab weekly updates
+  2. Fetch live market data (indices, fixed income, currencies, sectors, etc.)
+  3. Generate three AI-powered sections:
+       - What Happened Last Week  (multi-source + data-grounded)
+       - Sector Rotation Commentary  (data-driven)
+       - What Markets Are Watching This Week  (forward-looking)
   4. Assemble an HTML email and send via Gmail SMTP
 """
 import logging
@@ -28,21 +31,66 @@ from agents.market_data import fetch_all
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
-SOURCE_URL = (
+# ── Source URLs ────────────────────────────────────────────────────────────
+
+_SOURCE_TROWE = (
     "https://www.troweprice.com/personal-investing/resources/insights/"
     "global-markets-weekly-update.html"
 )
+_SOURCE_EJONES = (
+    "https://www.edwardjones.com/us-en/market-news-insights/stock-market-news/"
+    "stock-market-weekly-update"
+)
+_SOURCE_SCHWAB = "https://www.schwab.com.sg/story/weekly-traders-outlook"
 
-_SUMMARY_SYSTEM = """You are a concise financial analyst writing a Friday briefing email.
-You will receive the raw text of T. Rowe Price's Global Markets Weekly Update.
+_SOURCES = [
+    ("T. Rowe Price",  _SOURCE_TROWE),
+    ("Edward Jones",   _SOURCE_EJONES),
+    ("Charles Schwab", _SOURCE_SCHWAB),
+]
 
-Write a tight summary using HTML. Rules:
-- Use <h3> for each regional section header (include a flag emoji)
-- Use <ul><li> for bullet points (2–4 per section, no more)
-- Bold (<b>) any percentage moves or rate decisions
-- Sections: 🇺🇸 U.S. Markets · 🇪🇺 Europe · 🇯🇵 Japan · 🇨🇳 China · 🌐 Other Markets
-- Total length: scannable in under 2 minutes
+# ── Prompts ────────────────────────────────────────────────────────────────
+
+_WEEKLY_REVIEW_SYSTEM = """You are a senior financial analyst writing the "What Happened Last Week" section of a Monday morning market briefing email.
+
+You will receive:
+1. Market commentary from up to three sources: T. Rowe Price, Edward Jones, and Charles Schwab
+2. Actual market data for the week (index returns, yields, spreads, FX, commodities)
+
+Write a comprehensive weekly review in HTML. Rules:
+- Use <h3> for section headers (include a flag emoji)
+- Use <ul><li> for bullet points (3–5 per section)
+- Bold (<b>) any percentage moves, rate decisions, or key data figures — use the actual numbers provided
+- Cross-reference the source narratives with the actual data numbers where relevant
+- Sections: 🇺🇸 U.S. Markets · 🌐 Global Markets · 📊 Cross-Asset Themes
+- The Cross-Asset Themes section must synthesize what bond, FX, and commodity moves collectively signal about macro conditions and risk appetite
 - Start directly with the first <h3> tag — no preamble"""
+
+_SECTOR_SYSTEM = """You are a financial analyst writing a sector rotation commentary for a weekly market briefing email.
+
+You will receive the weekly and YTD returns for all 11 S&P 500 GICS sectors.
+
+Write 2–3 paragraphs in HTML (<p> tags only) covering:
+- Which sectors led and lagged this week, with the actual percentages
+- What the rotation pattern implies about investor sentiment (risk-on vs risk-off, growth vs value, cyclical vs defensive)
+- Any meaningful dispersion or divergence from the S&P 500's overall direction
+
+No headers. Start directly with the first <p> tag — no preamble."""
+
+_WEEK_AHEAD_SYSTEM = """You are a senior financial analyst writing the "What Markets Are Watching This Week" section of a Monday morning market briefing email.
+
+You will receive:
+1. Forward-looking commentary from T. Rowe Price, Edward Jones, and Charles Schwab
+2. This week's high-impact economic calendar events with consensus forecasts and prior readings
+3. Current market positioning data (VIX, yield curve, credit spreads)
+
+Write a concise but substantive week-ahead outlook in HTML:
+- <h3>📋 Key Events & Data Releases</h3> — 4–6 bullets on the most important scheduled releases this week, with consensus expectations and what a surprise would mean for markets
+- <h3>🎯 Themes to Watch</h3> — 3–4 bullets on the macro themes that will drive price action this week
+- <h3>⚠️ Risks & Wildcards</h3> — 2–3 bullets on tail risks or potential surprise catalysts to monitor
+
+Bold event names, key dates, and consensus figures. Be specific and actionable.
+Start directly with the first <h3> tag — no preamble."""
 
 # ── HTML helpers ───────────────────────────────────────────────────────────
 
@@ -271,12 +319,12 @@ def _calendar_section(this_week: List[Dict], next_week: List[Dict]) -> str:
                 date_str = dt.strftime("%a %b %d")
             except Exception:
                 date_str = e.get("dateUtc", "")[:10]
-            code       = e.get("countryCode", "")
-            flag       = _COUNTRY_FLAGS.get(code, "🌐")
-            country    = _COUNTRY_NAMES.get(code, code)
-            actual     = e.get("actual")    or "—"
-            forecast   = e.get("consensus") or "—"
-            prev       = e.get("previous")  or "—"
+            code     = e.get("countryCode", "")
+            flag     = _COUNTRY_FLAGS.get(code, "🌐")
+            country  = _COUNTRY_NAMES.get(code, code)
+            actual   = e.get("actual")    or "—"
+            forecast = e.get("consensus") or "—"
+            prev     = e.get("previous")  or "—"
             t += (
                 f'<tr>'
                 f'<td style="{_TD_L}">{date_str}</td>'
@@ -294,62 +342,244 @@ def _calendar_section(this_week: List[Dict], next_week: List[Dict]) -> str:
         return t
 
     html  = '<h3 style="color:#1a3a5c;margin-top:24px">📅 Economic Calendar</h3>'
-    html += _table(this_week,  "Last Week's Key Events",  show_actual=True)
-    html += _table(next_week,  "This Week's Key Events",  show_actual=False)
+    html += _table(this_week, "Last Week's Key Events",  show_actual=True)
+    html += _table(next_week, "This Week's Key Events",  show_actual=False)
     html += '<p style="font-size:10px;color:#9ca3af;margin:4px 0 0">High-impact events only · US, Euro Area, JP, CN, SG · Data via FXStreet</p>'
     return html
+
+
+# ── LLM prompt helpers ─────────────────────────────────────────────────────
+
+def _format_data_for_prompt(data: Dict) -> str:
+    """Serialise fetch_all() output as human-readable text for LLM context."""
+    parts = []
+
+    if data.get("vix"):
+        v = data["vix"]
+        parts.append(f"VIX: {v['value']:.2f} (weekly change: {v['weekly_change']:+.2f} pts)")
+
+    if data.get("spread_10y_2y"):
+        s = data["spread_10y_2y"]
+        wc = f", WoW: {s['weekly_bps']:+.1f} bps" if s.get("weekly_bps") is not None else ""
+        parts.append(f"10Y-2Y Spread: {s['value']} bps{wc}")
+
+    yield_lines = [
+        f"  {n}: {d['value']:.2f}%"
+        + (f" ({d['weekly_bps']:+.1f} bps WoW)" if d.get("weekly_bps") is not None else "")
+        for n, d in data.get("us_yields", []) if d
+    ]
+    if yield_lines:
+        parts.append("US Treasury Yields:\n" + "\n".join(yield_lines))
+
+    spread_lines = [
+        f"  {n}: {d['value'] * 100:.0f} bps"
+        + (f" ({d['weekly_bps']:+.1f} bps WoW)" if d.get("weekly_bps") is not None else "")
+        for n, d in data.get("spreads", []) if d
+    ]
+    if spread_lines:
+        parts.append("Credit Spreads:\n" + "\n".join(spread_lines))
+
+    if data.get("lqd_hyg_ratio"):
+        r = data["lqd_hyg_ratio"]
+        wc = f" (WoW: {r['weekly_change']:+.4f})" if r.get("weekly_change") is not None else ""
+        parts.append(f"LQD/HYG ratio (risk appetite proxy): {r['ratio']:.4f}{wc}")
+
+    idx_lines = [
+        f"  {n}: {d['weekly']:+.2f}% WoW, {d['ytd']:+.2f}% YTD"
+        for n, d in data.get("indices", []) if d
+    ]
+    if idx_lines:
+        parts.append("Equity Indices:\n" + "\n".join(idx_lines))
+
+    sec_lines = [
+        f"  {n}: {d['weekly']:+.2f}% WoW, {d['ytd']:+.2f}% YTD"
+        for n, d in data.get("sectors", []) if d
+    ]
+    if sec_lines:
+        parts.append("S&P 500 Sectors:\n" + "\n".join(sec_lines))
+
+    comm_lines = [
+        f"  {n}: {d['weekly']:+.2f}% WoW (last: {d['last']:,.2f})"
+        for n, d in data.get("commodities", []) if d
+    ]
+    if comm_lines:
+        parts.append("Commodities:\n" + "\n".join(comm_lines))
+
+    fx_lines = [
+        f"  {n}: {d['weekly']:+.2f}% WoW (last: {d['last']:.4f})"
+        for n, d in data.get("fx", []) if d
+    ]
+    if fx_lines:
+        parts.append("FX Pairs:\n" + "\n".join(fx_lines))
+
+    sov_lines = [
+        f"  {n}: {d['value']:.2f}%"
+        + (f" ({d['weekly_bps']:+.1f} bps MoM)" if d.get("weekly_bps") is not None else "")
+        for n, d in data.get("sovereign", []) if d
+    ]
+    if sov_lines:
+        parts.append("Sovereign Yields (monthly FRED):\n" + "\n".join(sov_lines))
+
+    return "\n\n".join(parts)
+
+
+def _format_calendar_for_prompt(calendar: Dict) -> str:
+    """Serialise economic calendar as human-readable text for LLM context."""
+    _FLAGS = {"US": "🇺🇸", "EMU": "🇪🇺", "JP": "🇯🇵", "CN": "🇨🇳", "SG": "🇸🇬"}
+    _NAMES = {"US": "United States", "EMU": "Euro Area", "JP": "Japan", "CN": "China", "SG": "Singapore"}
+
+    def _section(events: List[Dict], title: str) -> str:
+        if not events:
+            return f"{title}: none"
+        lines = [f"{title}:"]
+        for e in events:
+            try:
+                dt = datetime.fromisoformat(e["dateUtc"].replace("Z", "+00:00"))
+                date_str = dt.strftime("%a %b %d")
+            except Exception:
+                date_str = e.get("dateUtc", "")[:10]
+            code     = e.get("countryCode", "")
+            flag     = _FLAGS.get(code, "🌐")
+            name     = e.get("name", "")
+            forecast = e.get("consensus") or "—"
+            prev     = e.get("previous")  or "—"
+            actual   = e.get("actual")    or ""
+            act_str  = f" | Actual: {actual}" if actual else ""
+            lines.append(
+                f"  {date_str} {flag} {_NAMES.get(code, code)}: {name}"
+                f" | Forecast: {forecast} | Prior: {prev}{act_str}"
+            )
+        return "\n".join(lines)
+
+    return (
+        _section(calendar.get("this_week", []),  "LAST WEEK'S KEY EVENTS (with actuals)")
+        + "\n\n"
+        + _section(calendar.get("next_week", []), "THIS WEEK'S UPCOMING EVENTS (forecasts)")
+    )
+
+
+def _md_to_html(text: str) -> str:
+    """Convert basic markdown bold/italic to HTML (LLMs often emit markdown despite HTML prompts)."""
+    text = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', text, flags=re.DOTALL)
+    text = re.sub(r'\*(.+?)\*',     r'<em>\1</em>', text, flags=re.DOTALL)
+    return text
 
 
 # ── Core agent ─────────────────────────────────────────────────────────────
 
 class WeeklyRecapAgent:
 
-    def fetch_article(self) -> str:
-        logger.info("Fetching T. Rowe Price weekly update...")
-        r = requests.get(
-            SOURCE_URL,
-            headers={"User-Agent": "Mozilla/5.0 (compatible; weekly-recap/1.0)"},
-            timeout=15,
-        )
-        r.raise_for_status()
-        soup = BeautifulSoup(r.text, "lxml")
-        for tag in soup(["script", "style", "nav", "footer", "header"]):
-            tag.decompose()
-        main = soup.find("main") or soup.find("article") or soup.body
-        lines = [l.strip() for l in main.get_text(separator="\n").splitlines() if l.strip()]
-        return "\n".join(lines)
+    def _scrape_page(self, url: str, label: str, max_chars: int = 4000) -> str:
+        """Generic page scraper — returns plain text or empty string on failure."""
+        try:
+            logger.info(f"Fetching {label}...")
+            r = requests.get(
+                url,
+                headers={"User-Agent": "Mozilla/5.0 (compatible; weekly-recap/1.0)"},
+                timeout=15,
+            )
+            r.raise_for_status()
+            soup = BeautifulSoup(r.text, "lxml")
+            for tag in soup(["script", "style", "nav", "footer", "header"]):
+                tag.decompose()
+            main = soup.find("main") or soup.find("article") or soup.body
+            lines = [l.strip() for l in main.get_text(separator="\n").splitlines() if l.strip()]
+            text = "\n".join(lines)
+            if len(text) > max_chars:
+                text = text[:max_chars] + "\n[truncated]"
+            return text
+        except Exception as e:
+            logger.warning(f"Could not fetch {label}: {e}")
+            return ""
 
-    def summarise(self, text: str) -> str:
-        logger.info("Summarising with Groq (Llama 3.3 70B)...")
+    def fetch_all_articles(self) -> Dict[str, str]:
+        """Fetch all source articles. Returns {label: text}, skipping failed sources."""
+        return {
+            label: self._scrape_page(url, label)
+            for label, url in _SOURCES
+        }
+
+    def _llm(self, system: str, user: str, max_tokens: int) -> str:
+        """Single Groq LLM call with markdown-to-HTML cleanup."""
         client = Groq(api_key=os.getenv("GROQ_API_KEY"))
         response = client.chat.completions.create(
             model="llama-3.3-70b-versatile",
             messages=[
-                {"role": "system", "content": _SUMMARY_SYSTEM},
-                {"role": "user",   "content": text},
+                {"role": "system", "content": system},
+                {"role": "user",   "content": user},
             ],
-            max_tokens=1500,
+            max_tokens=max_tokens,
         )
-        text = response.choices[0].message.content
-        # LLMs often output markdown even when prompted for HTML — convert to HTML
-        text = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', text, flags=re.DOTALL)
-        text = re.sub(r'\*(.+?)\*',     r'<em>\1</em>', text, flags=re.DOTALL)
-        return text
+        return _md_to_html(response.choices[0].message.content)
 
-    def build_email(self, summary_html: str, data: Dict, date_str: str) -> str:
-        snapshot_section   = _snapshot_signals_section(
+    def summarise_weekly_review(self, articles: Dict[str, str], data: Dict) -> str:
+        logger.info("Generating weekly review (Groq)...")
+        sources_block = "".join(
+            f"\n\n--- {label} ---\n{text}"
+            for label, text in articles.items() if text
+        )
+        user_msg = (
+            f"MARKET DATA FOR THE WEEK:\n{_format_data_for_prompt(data)}"
+            f"\n\nSOURCE COMMENTARY:{sources_block}"
+        )
+        return self._llm(_WEEKLY_REVIEW_SYSTEM, user_msg, max_tokens=2000)
+
+    def summarise_sectors(self, data: Dict) -> str:
+        logger.info("Generating sector rotation commentary (Groq)...")
+        sp500 = next((d for n, d in data.get("indices", []) if "S&P 500" in n), None)
+        header = f"S&P 500 weekly return: {sp500['weekly']:+.2f}%\n\n" if sp500 else ""
+        sector_lines = "\n".join(
+            f"  {n}: {d['weekly']:+.2f}% WoW, {d['ytd']:+.2f}% YTD"
+            for n, d in data.get("sectors", []) if d
+        )
+        return self._llm(_SECTOR_SYSTEM, f"{header}S&P 500 SECTOR RETURNS:\n{sector_lines}", max_tokens=600)
+
+    def summarise_week_ahead(self, articles: Dict[str, str], data: Dict) -> str:
+        logger.info("Generating week-ahead outlook (Groq)...")
+        sources_block = "".join(
+            f"\n\n--- {label} ---\n{text}"
+            for label, text in articles.items() if text
+        )
+        positioning_parts = []
+        if data.get("vix"):
+            positioning_parts.append(f"VIX: {data['vix']['value']:.2f}")
+        if data.get("spread_10y_2y"):
+            positioning_parts.append(f"10Y-2Y: {data['spread_10y_2y']['value']} bps")
+        for n, d in data.get("spreads", []):
+            if d:
+                positioning_parts.append(f"{n}: {d['value'] * 100:.0f} bps")
+        user_msg = (
+            f"CURRENT POSITIONING: {', '.join(positioning_parts)}\n\n"
+            f"ECONOMIC CALENDAR:\n{_format_calendar_for_prompt(data['calendar'])}"
+            f"\n\nSOURCE COMMENTARY:{sources_block}"
+        )
+        return self._llm(_WEEK_AHEAD_SYSTEM, user_msg, max_tokens=1500)
+
+    def build_email(
+        self,
+        review_html: str,
+        sector_html: str,
+        week_ahead_html: str,
+        data: Dict,
+        date_str: str,
+    ) -> str:
+        snapshot_section    = _snapshot_signals_section(
             data.get("vix"), data["spread_10y_2y"], data["spreads"],
             data["lqd_hyg_ratio"], data["signals"],
         )
-        indices_section    = _returns_table(data["indices"],     "📈 Global Equity Indices")
-        sectors_section    = _returns_table(data["sectors"],     "🏭 S&P 500 Sectors (GICS)")
-        bond_etf_section   = _returns_table(data["bond_etfs"],   "Bond ETFs")
-        fi_section         = _yields_table(data["us_yields"], data["sovereign"]) + bond_etf_section
-        commodities_section= _returns_table(data["commodities"], "🛢️ Commodities")
-        fx_section         = _returns_table(data["fx"],          "💱 FX")
-        crypto_section     = _returns_table(data["crypto"],      "🪙 Crypto")
-        cal_section        = _calendar_section(
+        indices_section     = _returns_table(data["indices"],     "📈 Global Equity Indices")
+        sectors_section     = _returns_table(data["sectors"],     "🏭 S&P 500 Sectors (GICS)")
+        bond_etf_section    = _returns_table(data["bond_etfs"],   "Bond ETFs")
+        fi_section          = _yields_table(data["us_yields"], data["sovereign"]) + bond_etf_section
+        commodities_section = _returns_table(data["commodities"], "🛢️ Commodities")
+        fx_section          = _returns_table(data["fx"],          "💱 FX")
+        crypto_section      = _returns_table(data["crypto"],      "🪙 Crypto")
+        cal_section         = _calendar_section(
             data["calendar"]["this_week"], data["calendar"]["next_week"]
+        )
+        source_links = " · ".join(
+            f'<a href="{url}" style="color:#6b7280;">{label}</a>'
+            for label, url in _SOURCES
         )
 
         return f"""<html>
@@ -362,12 +592,17 @@ class WeeklyRecapAgent:
 
   <div style="padding:20px 24px;background:#f9fafb;border:1px solid #e5e7eb;border-top:none;">
 
-    <h3 style="color:#1a3a5c;margin-top:0">📝 Weekly Summary</h3>
+    <h3 style="color:#1a3a5c;margin-top:0">📝 What Happened Last Week</h3>
     <div style="background:#fff;padding:16px;border-radius:4px;border:1px solid #e5e7eb;">
-      {summary_html}
+      {review_html}
       <p style="font-size:11px;color:#9ca3af;margin:12px 0 0">
-        Source: <a href="{SOURCE_URL}" style="color:#6b7280;">T. Rowe Price — Global Markets Weekly Update</a>
+        Sources: {source_links}
       </p>
+    </div>
+
+    <h3 style="color:#1a3a5c;margin-top:24px">🔄 Sector Rotation</h3>
+    <div style="background:#fff;padding:16px;border-radius:4px;border:1px solid #e5e7eb;">
+      {sector_html}
     </div>
 
     {snapshot_section}
@@ -379,11 +614,18 @@ class WeeklyRecapAgent:
     {crypto_section}
     {cal_section}
 
+    <h3 style="color:#1a3a5c;margin-top:24px">🔭 What Markets Are Watching This Week</h3>
+    <div style="background:#fff;padding:16px;border-radius:4px;border:1px solid #e5e7eb;">
+      {week_ahead_html}
+      <p style="font-size:11px;color:#9ca3af;margin:12px 0 0">
+        Sources: {source_links} · Calendar via FXStreet
+      </p>
+    </div>
+
     <hr style="margin-top:32px;border:none;border-top:1px solid #e5e7eb;">
     <p style="font-size:11px;color:#9ca3af;">
-      Market data via Yahoo Finance &amp; FRED. Summary sourced from
-      <a href="{SOURCE_URL}" style="color:#9ca3af;">T. Rowe Price Global Markets Weekly Update</a>.<br>
-      Delivered automatically every Friday at 11:59 AM SGT.
+      Market data via Yahoo Finance &amp; FRED · Commentary via {source_links}<br>
+      Delivered automatically every Monday at 9:00 AM SGT.
     </p>
   </div>
 
@@ -417,13 +659,15 @@ class WeeklyRecapAgent:
         date_str = datetime.now(sgt).strftime("%B %d, %Y")
         subject  = f"🌍 Weekly Market Recap — {date_str}"
 
-        article_text = self.fetch_article()
-        summary_html = self.summarise(article_text)
-
+        articles = self.fetch_all_articles()
         fred_key = os.getenv("FRED_API_KEY", "")
         data     = fetch_all(fred_key)
 
-        email_html = self.build_email(summary_html, data, date_str)
+        review_html     = self.summarise_weekly_review(articles, data)
+        sector_html     = self.summarise_sectors(data)
+        week_ahead_html = self.summarise_week_ahead(articles, data)
+
+        email_html = self.build_email(review_html, sector_html, week_ahead_html, data, date_str)
         self.send_email(subject, email_html)
         logger.info("Weekly recap complete.")
 
