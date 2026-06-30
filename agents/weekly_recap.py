@@ -56,14 +56,24 @@ _WEEKLY_REVIEW_SYSTEM = """You are a senior financial analyst writing the "What 
 You will receive:
 1. Market commentary from up to three sources: T. Rowe Price, Edward Jones, and Charles Schwab
 2. Actual market data for the week (index returns, yields, spreads, FX, commodities)
+3. Global news headlines from BBC News
+
+METRIC INTERPRETATION GUIDE — apply these definitions precisely when interpreting the data:
+- VIX: higher = more fear / risk-off; lower = calmer / risk-on
+- LQD/HYG ratio: HIGHER = risk-OFF (investment-grade bonds outperforming high-yield = flight to safety); LOWER = risk-ON
+- Credit spreads (HY Spread, IG Spread): WIDENING = risk-off; TIGHTENING = risk-on
+- 10Y-2Y Spread: deeply negative = inversion / recession signal; moving toward zero or positive = curve normalising
 
 Write a comprehensive weekly review in HTML. Rules:
 - Use <h3> for section headers (include a flag emoji)
 - Use <ul><li> for bullet points (3–5 per section)
 - Bold (<b>) any percentage moves, rate decisions, or key data figures — use the actual numbers provided
 - Cross-reference the source narratives with the actual data numbers where relevant
-- Sections: 🇺🇸 U.S. Markets · 🌐 Global Markets · 📊 Cross-Asset Themes
-- The Cross-Asset Themes section must synthesize what bond, FX, and commodity moves collectively signal about macro conditions and risk appetite
+- Sections (in this order):
+    📰 Major News — 3–5 bullets on significant non-market global events from the news headlines (political, geopolitical, policy). Skip minor items. Only use events from the provided headlines — do not invent news.
+    🇺🇸 U.S. Markets
+    🌐 Global Markets
+    📊 Cross-Asset Themes — synthesize what bond, FX, and commodity moves collectively signal about macro conditions and risk appetite; use the metric interpretation guide above
 - Start directly with the first <h3> tag — no preamble"""
 
 _SECTOR_SYSTEM = """You are a financial analyst writing a sector rotation commentary for a weekly market briefing email.
@@ -84,12 +94,27 @@ You will receive:
 2. This week's high-impact economic calendar events with consensus forecasts and prior readings
 3. Current market positioning data (VIX, yield curve, credit spreads)
 
-Write a concise but substantive week-ahead outlook in HTML:
-- <h3>📋 Key Events & Data Releases</h3> — 4–6 bullets on the most important scheduled releases this week, with consensus expectations and what a surprise would mean for markets
-- <h3>🎯 Themes to Watch</h3> — 3–4 bullets on the macro themes that will drive price action this week
-- <h3>⚠️ Risks & Wildcards</h3> — 2–3 bullets on tail risks or potential surprise catalysts to monitor
+Write a concise but substantive week-ahead outlook in HTML using ONLY bullet points — no prose paragraphs:
 
-Bold event names, key dates, and consensus figures. Be specific and actionable.
+<h3>📋 Key Events & Data Releases</h3>
+<ul>
+  <li>One event per bullet. Include: date, event name (bolded), consensus expectation, and one sentence on what a surprise would mean.</li>
+  ... (4–6 bullets total)
+</ul>
+
+<h3>🎯 Themes to Watch</h3>
+<ul>
+  <li>One theme per bullet — the macro narratives that will drive price action this week.</li>
+  ... (3–4 bullets total)
+</ul>
+
+<h3>⚠️ Risks & Wildcards</h3>
+<ul>
+  <li>One risk per bullet — tail risks or potential surprise catalysts.</li>
+  ... (2–3 bullets total)
+</ul>
+
+Keep each bullet to 1–2 sentences. Bold event names, key dates, and consensus figures.
 Start directly with the first <h3> tag — no preamble."""
 
 # ── HTML helpers ───────────────────────────────────────────────────────────
@@ -225,7 +250,7 @@ def _snapshot_signals_section(vix, spread_10y_2y, spreads, lqd_hyg, signals) -> 
             wc_html = f'<span style="color:{wc_color};font-weight:600">{sign}{wc:.4f}</span>'
         else:
             wc_html = '<span style="color:#9ca3af">—</span>'
-        lqd_hyg_label = f'LQD / HYG <span style="font-size:10px;color:#9ca3af">(canary, risk on/off)</span>'
+        lqd_hyg_label = f'LQD / HYG <span style="font-size:10px;color:#9ca3af">(↑ = risk-off, ↓ = risk-on)</span>'
         html += (
             f'<tr><td style="{_TD_L}">{lqd_hyg_label}</td>'
             f'<td style="{_TD}">{lqd_hyg["ratio"]:.4f}</td>'
@@ -382,7 +407,7 @@ def _format_data_for_prompt(data: Dict) -> str:
     if data.get("lqd_hyg_ratio"):
         r = data["lqd_hyg_ratio"]
         wc = f" (WoW: {r['weekly_change']:+.4f})" if r.get("weekly_change") is not None else ""
-        parts.append(f"LQD/HYG ratio (risk appetite proxy): {r['ratio']:.4f}{wc}")
+        parts.append(f"LQD/HYG ratio (higher = risk-OFF / flight to safety): {r['ratio']:.4f}{wc}")
 
     idx_lines = [
         f"  {n}: {d['weekly']:+.2f}% WoW, {d['ytd']:+.2f}% YTD"
@@ -499,6 +524,32 @@ class WeeklyRecapAgent:
             for label, url in _SOURCES
         }
 
+    def fetch_news_headlines(self, max_items: int = 20) -> str:
+        """Fetch top global headlines from BBC News RSS for the Major News section."""
+        import xml.etree.ElementTree as ET
+        try:
+            logger.info("Fetching BBC news headlines...")
+            r = requests.get(
+                "https://feeds.bbci.co.uk/news/rss.xml",
+                headers={"User-Agent": "Mozilla/5.0 (compatible; weekly-recap/1.0)"},
+                timeout=10,
+            )
+            r.raise_for_status()
+            root = ET.fromstring(r.content)
+            headlines = []
+            for item in root.findall(".//item")[:max_items]:
+                title = (item.findtext("title") or "").strip()
+                desc  = (item.findtext("description") or "").strip()
+                if title:
+                    line = f"- {title}"
+                    if desc and desc != title:
+                        line += f": {desc}"
+                    headlines.append(line)
+            return "\n".join(headlines)
+        except Exception as e:
+            logger.warning(f"Could not fetch news headlines: {e}")
+            return ""
+
     def _llm(self, system: str, user: str, max_tokens: int) -> str:
         """Single Groq LLM call with markdown-to-HTML cleanup."""
         client = Groq(api_key=os.getenv("GROQ_API_KEY"))
@@ -512,17 +563,19 @@ class WeeklyRecapAgent:
         )
         return _md_to_html(response.choices[0].message.content)
 
-    def summarise_weekly_review(self, articles: Dict[str, str], data: Dict) -> str:
+    def summarise_weekly_review(self, articles: Dict[str, str], data: Dict, headlines: str = "") -> str:
         logger.info("Generating weekly review (Groq)...")
         sources_block = "".join(
             f"\n\n--- {label} ---\n{text}"
             for label, text in articles.items() if text
         )
+        news_block = f"\n\nGLOBAL NEWS HEADLINES (BBC):\n{headlines}" if headlines else ""
         user_msg = (
             f"MARKET DATA FOR THE WEEK:\n{_format_data_for_prompt(data)}"
             f"\n\nSOURCE COMMENTARY:{sources_block}"
+            f"{news_block}"
         )
-        return self._llm(_WEEKLY_REVIEW_SYSTEM, user_msg, max_tokens=2000)
+        return self._llm(_WEEKLY_REVIEW_SYSTEM, user_msg, max_tokens=2500)
 
     def summarise_sectors(self, data: Dict) -> str:
         logger.info("Generating sector rotation commentary (Groq)...")
@@ -587,7 +640,7 @@ class WeeklyRecapAgent:
 <body style="font-family:Arial,sans-serif;max-width:720px;margin:auto;color:#222;line-height:1.6;">
 
   <div style="background:#1a3a5c;color:#fff;padding:18px 24px;border-radius:6px 6px 0 0;">
-    <h2 style="margin:0;font-size:20px;">🌍 Weekly Market Recap</h2>
+    <h2 style="margin:0;font-size:20px;">🌍 Weekly Market Recap &amp; Outlook</h2>
     <p style="margin:4px 0 0;font-size:13px;opacity:0.8;">{date_str}</p>
   </div>
 
@@ -602,7 +655,7 @@ class WeeklyRecapAgent:
     </div>
 
     <h3 style="color:#1a3a5c;margin-top:24px">🔄 Sector Rotation</h3>
-    <div style="background:#fff;padding:16px;border-radius:4px;border:1px solid #e5e7eb;">
+    <div style="background:#fff;padding:1px 16px;border-radius:4px;border:1px solid #e5e7eb;font-size:14px;line-height:1.7;">
       {sector_html}
     </div>
 
@@ -658,13 +711,14 @@ class WeeklyRecapAgent:
     def run(self) -> None:
         sgt      = pytz.timezone("Asia/Singapore")
         date_str = datetime.now(sgt).strftime("%B %d, %Y")
-        subject  = f"🌍 Weekly Market Recap — {date_str}"
+        subject  = f"🌍 Weekly Market Recap & Outlook — {date_str}"
 
-        articles = self.fetch_all_articles()
-        fred_key = os.getenv("FRED_API_KEY", "")
-        data     = fetch_all(fred_key)
+        articles  = self.fetch_all_articles()
+        headlines = self.fetch_news_headlines()
+        fred_key  = os.getenv("FRED_API_KEY", "")
+        data      = fetch_all(fred_key)
 
-        review_html     = self.summarise_weekly_review(articles, data)
+        review_html     = self.summarise_weekly_review(articles, data, headlines)
         sector_html     = self.summarise_sectors(data)
         week_ahead_html = self.summarise_week_ahead(articles, data)
 
