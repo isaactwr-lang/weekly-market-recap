@@ -56,7 +56,6 @@ _WEEKLY_REVIEW_SYSTEM = """You are a senior financial analyst writing the "What 
 You will receive:
 1. Market commentary from up to three sources: T. Rowe Price, Edward Jones, and Charles Schwab
 2. Actual market data for the week (index returns, yields, spreads, FX, commodities)
-3. Global news headlines from BBC News
 
 METRIC INTERPRETATION GUIDE — apply these definitions precisely when interpreting the data:
 - VIX: higher = more fear / risk-off; lower = calmer / risk-on
@@ -64,16 +63,19 @@ METRIC INTERPRETATION GUIDE — apply these definitions precisely when interpret
 - Credit spreads (HY Spread, IG Spread): WIDENING = risk-off; TIGHTENING = risk-on
 - 10Y-2Y Spread: deeply negative = inversion / recession signal; moving toward zero or positive = curve normalising
 
+ATTRIBUTION FORMAT — when attributing a claim to a specific source, use inline greyed HTML only:
+<span style="color:#9ca3af;font-size:11px">(T. Rowe Price)</span>
+Never write "as reported by", "according to", "as noted by", or any similar phrasing.
+
 Write a comprehensive weekly review in HTML. Rules:
 - Use <h3> for section headers (include a flag emoji)
 - Use <ul><li> for bullet points (3–5 per section)
 - Bold (<b>) any percentage moves, rate decisions, or key data figures — use the actual numbers provided
-- Cross-reference the source narratives with the actual data numbers where relevant
 - Sections (in this order):
-    📰 Major News — 3–5 bullets on significant non-market global events from the news headlines (political, geopolitical, policy). Skip minor items. Only use events from the provided headlines — do not invent news.
+    📰 Major News — 3–5 bullets on significant non-market global events from last week mentioned in the source commentary (political changes, geopolitical developments, major policy shifts). Only include events explicitly present in the provided sources — do not invent.
     🇺🇸 U.S. Markets
     🌐 Global Markets
-    📊 Cross-Asset Themes — synthesize what bond, FX, and commodity moves collectively signal about macro conditions and risk appetite; use the metric interpretation guide above
+    📊 Cross-Asset Themes — synthesize what bond, FX, and commodity moves collectively signal about macro conditions and risk appetite; apply the metric interpretation guide above
 - Start directly with the first <h3> tag — no preamble"""
 
 _SECTOR_SYSTEM = """You are a financial analyst writing a sector rotation commentary for a weekly market briefing email.
@@ -115,6 +117,7 @@ Write a concise but substantive week-ahead outlook in HTML using ONLY bullet poi
 </ul>
 
 Keep each bullet to 1–2 sentences. Bold event names, key dates, and consensus figures.
+When attributing a claim to a specific source, use inline greyed HTML: <span style="color:#9ca3af;font-size:11px">(T. Rowe Price)</span> — never write "as noted by" or similar phrasing.
 Start directly with the first <h3> tag — no preamble."""
 
 # ── HTML helpers ───────────────────────────────────────────────────────────
@@ -524,32 +527,6 @@ class WeeklyRecapAgent:
             for label, url in _SOURCES
         }
 
-    def fetch_news_headlines(self, max_items: int = 20) -> str:
-        """Fetch top global headlines from BBC News RSS for the Major News section."""
-        import xml.etree.ElementTree as ET
-        try:
-            logger.info("Fetching BBC news headlines...")
-            r = requests.get(
-                "https://feeds.bbci.co.uk/news/rss.xml",
-                headers={"User-Agent": "Mozilla/5.0 (compatible; weekly-recap/1.0)"},
-                timeout=10,
-            )
-            r.raise_for_status()
-            root = ET.fromstring(r.content)
-            headlines = []
-            for item in root.findall(".//item")[:max_items]:
-                title = (item.findtext("title") or "").strip()
-                desc  = (item.findtext("description") or "").strip()
-                if title:
-                    line = f"- {title}"
-                    if desc and desc != title:
-                        line += f": {desc}"
-                    headlines.append(line)
-            return "\n".join(headlines)
-        except Exception as e:
-            logger.warning(f"Could not fetch news headlines: {e}")
-            return ""
-
     def _llm(self, system: str, user: str, max_tokens: int) -> str:
         """Single Groq LLM call with markdown-to-HTML cleanup."""
         client = Groq(api_key=os.getenv("GROQ_API_KEY"))
@@ -563,17 +540,15 @@ class WeeklyRecapAgent:
         )
         return _md_to_html(response.choices[0].message.content)
 
-    def summarise_weekly_review(self, articles: Dict[str, str], data: Dict, headlines: str = "") -> str:
+    def summarise_weekly_review(self, articles: Dict[str, str], data: Dict) -> str:
         logger.info("Generating weekly review (Groq)...")
         sources_block = "".join(
             f"\n\n--- {label} ---\n{text}"
             for label, text in articles.items() if text
         )
-        news_block = f"\n\nGLOBAL NEWS HEADLINES (BBC):\n{headlines}" if headlines else ""
         user_msg = (
             f"MARKET DATA FOR THE WEEK:\n{_format_data_for_prompt(data)}"
             f"\n\nSOURCE COMMENTARY:{sources_block}"
-            f"{news_block}"
         )
         return self._llm(_WEEKLY_REVIEW_SYSTEM, user_msg, max_tokens=2500)
 
@@ -713,12 +688,11 @@ class WeeklyRecapAgent:
         date_str = datetime.now(sgt).strftime("%B %d, %Y")
         subject  = f"🌍 Weekly Market Recap & Outlook — {date_str}"
 
-        articles  = self.fetch_all_articles()
-        headlines = self.fetch_news_headlines()
-        fred_key  = os.getenv("FRED_API_KEY", "")
-        data      = fetch_all(fred_key)
+        articles = self.fetch_all_articles()
+        fred_key = os.getenv("FRED_API_KEY", "")
+        data     = fetch_all(fred_key)
 
-        review_html     = self.summarise_weekly_review(articles, data, headlines)
+        review_html     = self.summarise_weekly_review(articles, data)
         sector_html     = self.summarise_sectors(data)
         week_ahead_html = self.summarise_week_ahead(articles, data)
 
