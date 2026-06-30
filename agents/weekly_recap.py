@@ -68,12 +68,12 @@ Write a comprehensive weekly review in HTML. Rules:
 
 _SECTOR_SYSTEM = """You are a financial analyst writing a sector rotation commentary for a weekly market briefing email.
 
-You will receive the weekly and YTD returns for all 11 S&P 500 GICS sectors.
+You will receive the weekly and YTD returns for all 11 S&P 500 GICS sectors, plus each sector's alpha (return minus the S&P 500's weekly return).
 
 Write 2–3 paragraphs in HTML (<p> tags only) covering:
 - Which sectors led and lagged this week, with the actual percentages
+- What the alpha column reveals about active rotation — where money moved relative to the index, not just in absolute terms
 - What the rotation pattern implies about investor sentiment (risk-on vs risk-off, growth vs value, cyclical vs defensive)
-- Any meaningful dispersion or divergence from the S&P 500's overall direction
 
 No headers. Start directly with the first <p> tag — no preamble."""
 
@@ -527,9 +527,10 @@ class WeeklyRecapAgent:
     def summarise_sectors(self, data: Dict) -> str:
         logger.info("Generating sector rotation commentary (Groq)...")
         sp500 = next((d for n, d in data.get("indices", []) if "S&P 500" in n), None)
-        header = f"S&P 500 weekly return: {sp500['weekly']:+.2f}%\n\n" if sp500 else ""
+        spx_weekly = sp500["weekly"] if sp500 else 0.0
+        header = f"S&P 500 weekly return: {spx_weekly:+.2f}%\n\n"
         sector_lines = "\n".join(
-            f"  {n}: {d['weekly']:+.2f}% WoW, {d['ytd']:+.2f}% YTD"
+            f"  {n}: {d['weekly']:+.2f}% WoW, alpha vs SPX: {d['weekly'] - spx_weekly:+.2f}%, {d['ytd']:+.2f}% YTD"
             for n, d in data.get("sectors", []) if d
         )
         return self._llm(_SECTOR_SYSTEM, f"{header}S&P 500 SECTOR RETURNS:\n{sector_lines}", max_tokens=600)
