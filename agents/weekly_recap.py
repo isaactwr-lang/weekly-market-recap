@@ -78,16 +78,6 @@ Write a comprehensive weekly review in HTML. Rules:
     📊 Cross-Asset Themes — synthesize what bond, FX, and commodity moves collectively signal about macro conditions and risk appetite; apply the metric interpretation guide above
 - Start directly with the first <h3> tag — no preamble"""
 
-_SECTOR_SYSTEM = """You are a financial analyst writing a sector rotation commentary for a weekly market briefing email.
-
-You will receive the weekly and YTD returns for all 11 S&P 500 GICS sectors, plus each sector's alpha (return minus the S&P 500's weekly return).
-
-Write 2–3 paragraphs in HTML (<p> tags only) covering:
-- Which sectors led and lagged this week, with the actual percentages
-- What the alpha column reveals about active rotation — where money moved relative to the index, not just in absolute terms
-- What the rotation pattern implies about investor sentiment (risk-on vs risk-off, growth vs value, cyclical vs defensive)
-
-No headers. Start directly with the first <p> tag — no preamble."""
 
 _WEEK_AHEAD_SYSTEM = """You are a senior financial analyst writing the "What Markets Are Watching This Week" section of a Monday morning market briefing email.
 
@@ -185,6 +175,41 @@ def _returns_table(rows: List[Tuple[str, Optional[Dict]]], title: str) -> str:
                 f'<td style="{_TD}color:#9ca3af;" colspan="4">data unavailable</td></tr>'
             )
     return header + body + "</tbody></table>"
+
+
+def _sector_alpha_table(sectors: List[Tuple[str, Optional[Dict]]], indices: List[Tuple[str, Optional[Dict]]]) -> str:
+    spx = next((d for n, d in indices if n == "S&P 500"), None)
+    if not spx:
+        return ""
+    header = (
+        '<h3 style="color:#1a3a5c;margin-top:24px">📊 S&P 500 Sectors — Alpha vs. S&amp;P 500</h3>'
+        '<table style="border-collapse:collapse;width:100%;font-size:13px">'
+        f'<thead><tr>'
+        f'<th style="{_TH_L}">Sector</th>'
+        f'<th style="{_TH}">1W α</th>'
+        f'<th style="{_TH}">MTD α</th>'
+        f'<th style="{_TH}">YTD α</th>'
+        f'</tr></thead><tbody>'
+    )
+    body = ""
+    for name, d in sectors:
+        if d:
+            w_alpha = d["weekly"] - spx["weekly"] if spx.get("weekly") is not None else None
+            m_alpha = d["mtd"]    - spx["mtd"]    if spx.get("mtd")    is not None else None
+            y_alpha = d["ytd"]    - spx["ytd"]    if spx.get("ytd")    is not None else None
+            body += (
+                f'<tr><td style="{_TD_L}">{name}</td>'
+                f'<td style="{_TD}">{_pct(w_alpha)}</td>'
+                f'<td style="{_TD}">{_pct(m_alpha)}</td>'
+                f'<td style="{_TD}">{_pct(y_alpha)}</td></tr>'
+            )
+        else:
+            body += (
+                f'<tr><td style="{_TD_L}">{name}</td>'
+                f'<td style="{_TD}" colspan="3"><span style="color:#9ca3af">data unavailable</span></td></tr>'
+            )
+    footer = '<p style="font-size:10px;color:#9ca3af;margin:4px 0 0">Alpha = sector return minus S&amp;P 500 return for the same period</p>'
+    return header + body + "</tbody></table>" + footer
 
 
 _COUNTRY_FLAGS = {
@@ -552,17 +577,6 @@ class WeeklyRecapAgent:
         )
         return self._llm(_WEEKLY_REVIEW_SYSTEM, user_msg, max_tokens=2500)
 
-    def summarise_sectors(self, data: Dict) -> str:
-        logger.info("Generating sector rotation commentary (Groq)...")
-        sp500 = next((d for n, d in data.get("indices", []) if "S&P 500" in n), None)
-        spx_weekly = sp500["weekly"] if sp500 else 0.0
-        header = f"S&P 500 weekly return: {spx_weekly:+.2f}%\n\n"
-        sector_lines = "\n".join(
-            f"  {n}: {d['weekly']:+.2f}% WoW, alpha vs SPX: {d['weekly'] - spx_weekly:+.2f}%, {d['ytd']:+.2f}% YTD"
-            for n, d in data.get("sectors", []) if d
-        )
-        return self._llm(_SECTOR_SYSTEM, f"{header}S&P 500 SECTOR RETURNS:\n{sector_lines}", max_tokens=600)
-
     def summarise_week_ahead(self, articles: Dict[str, str], data: Dict) -> str:
         logger.info("Generating week-ahead outlook (Groq)...")
         sources_block = "".join(
@@ -587,7 +601,6 @@ class WeeklyRecapAgent:
     def build_email(
         self,
         review_html: str,
-        sector_html: str,
         week_ahead_html: str,
         data: Dict,
         date_str: str,
@@ -598,6 +611,7 @@ class WeeklyRecapAgent:
         )
         indices_section     = _returns_table(data["indices"],     "📈 Global Equity Indices")
         sectors_section     = _returns_table(data["sectors"],     "🏭 S&P 500 Sectors (GICS)")
+        sectors_alpha       = _sector_alpha_table(data["sectors"], data["indices"])
         bond_etf_section    = _returns_table(data["bond_etfs"],   "Bond ETFs")
         fi_section          = _yields_table(data["us_yields"], data["sovereign"]) + bond_etf_section
         commodities_section = _returns_table(data["commodities"], "🛢️ Commodities")
@@ -629,14 +643,10 @@ class WeeklyRecapAgent:
       </p>
     </div>
 
-    <h3 style="color:#1a3a5c;margin-top:24px">🔄 Sector Rotation</h3>
-    <div style="background:#fff;padding:1px 16px;border-radius:4px;border:1px solid #e5e7eb;font-size:14px;line-height:1.7;">
-      {sector_html}
-    </div>
-
     {snapshot_section}
     {indices_section}
     {sectors_section}
+    {sectors_alpha}
     {fi_section}
     {commodities_section}
     {fx_section}
@@ -693,10 +703,9 @@ class WeeklyRecapAgent:
         data     = fetch_all(fred_key)
 
         review_html     = self.summarise_weekly_review(articles, data)
-        sector_html     = self.summarise_sectors(data)
         week_ahead_html = self.summarise_week_ahead(articles, data)
 
-        email_html = self.build_email(review_html, sector_html, week_ahead_html, data, date_str)
+        email_html = self.build_email(review_html, week_ahead_html, data, date_str)
         self.send_email(subject, email_html)
         logger.info("Weekly recap complete.")
 
