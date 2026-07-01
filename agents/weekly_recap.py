@@ -155,8 +155,9 @@ def _returns_table(rows: List[Tuple[str, Optional[Dict]]], title: str) -> str:
         f'<th style="{_TH_L}">Name</th>'
         f'<th style="{_TH}">Last</th>'
         f'<th style="{_TH}">1W %</th>'
-        f'<th style="{_TH}">MTD %</th>'
+        f'<th style="{_TH}">1M %</th>'
         f'<th style="{_TH}">YTD %</th>'
+        f'<th style="{_TH}">1Y %</th>'
         f'</tr></thead><tbody>'
     )
     body = ""
@@ -166,13 +167,14 @@ def _returns_table(rows: List[Tuple[str, Optional[Dict]]], title: str) -> str:
                 f'<tr><td style="{_TD_L}">{name}</td>'
                 f'<td style="{_TD}">{_price(d["last"])}</td>'
                 f'<td style="{_TD}">{_pct(d["weekly"])}</td>'
-                f'<td style="{_TD}">{_pct(d["mtd"])}</td>'
-                f'<td style="{_TD}">{_pct(d["ytd"])}</td></tr>'
+                f'<td style="{_TD}">{_pct(d.get("one_month"))}</td>'
+                f'<td style="{_TD}">{_pct(d["ytd"])}</td>'
+                f'<td style="{_TD}">{_pct(d.get("one_year"))}</td></tr>'
             )
         else:
             body += (
                 f'<tr><td style="{_TD_L}">{name}</td>'
-                f'<td style="{_TD}color:#9ca3af;" colspan="4">data unavailable</td></tr>'
+                f'<td style="{_TD}color:#9ca3af;" colspan="5">data unavailable</td></tr>'
             )
     return header + body + "</tbody></table>"
 
@@ -187,26 +189,28 @@ def _sector_alpha_table(sectors: List[Tuple[str, Optional[Dict]]], indices: List
         f'<thead><tr>'
         f'<th style="{_TH_L}">Sector</th>'
         f'<th style="{_TH}">1W α</th>'
-        f'<th style="{_TH}">MTD α</th>'
+        f'<th style="{_TH}">1M α</th>'
         f'<th style="{_TH}">YTD α</th>'
+        f'<th style="{_TH}">1Y α</th>'
         f'</tr></thead><tbody>'
     )
     body = ""
     for name, d in sectors:
         if d:
-            w_alpha = d["weekly"] - spx["weekly"] if spx.get("weekly") is not None else None
-            m_alpha = d["mtd"]    - spx["mtd"]    if spx.get("mtd")    is not None else None
-            y_alpha = d["ytd"]    - spx["ytd"]    if spx.get("ytd")    is not None else None
+            def _a(key):
+                sv, spxv = d.get(key), spx.get(key)
+                return sv - spxv if sv is not None and spxv is not None else None
             body += (
                 f'<tr><td style="{_TD_L}">{name}</td>'
-                f'<td style="{_TD}">{_pct(w_alpha)}</td>'
-                f'<td style="{_TD}">{_pct(m_alpha)}</td>'
-                f'<td style="{_TD}">{_pct(y_alpha)}</td></tr>'
+                f'<td style="{_TD}">{_pct(_a("weekly"))}</td>'
+                f'<td style="{_TD}">{_pct(_a("one_month"))}</td>'
+                f'<td style="{_TD}">{_pct(_a("ytd"))}</td>'
+                f'<td style="{_TD}">{_pct(_a("one_year"))}</td></tr>'
             )
         else:
             body += (
                 f'<tr><td style="{_TD_L}">{name}</td>'
-                f'<td style="{_TD}" colspan="3"><span style="color:#9ca3af">data unavailable</span></td></tr>'
+                f'<td style="{_TD}" colspan="4"><span style="color:#9ca3af">data unavailable</span></td></tr>'
             )
     footer = '<p style="font-size:10px;color:#9ca3af;margin:4px 0 0">Alpha = sector return minus S&amp;P 500 return for the same period</p>'
     return header + body + "</tbody></table>" + footer
@@ -230,6 +234,22 @@ _SIGNAL_DESCRIPTIONS = {
 }
 
 
+def _vix_chg(val: Optional[float]) -> str:
+    if val is None:
+        return '<span style="color:#9ca3af">—</span>'
+    sign = "+" if val >= 0 else ""
+    color = _GREEN if val < 0 else (_RED if val > 0 else _GRAY)
+    return f'<span style="color:{color};font-weight:600">{sign}{val:.2f}</span>'
+
+
+def _ratio_chg(val: Optional[float]) -> str:
+    if val is None:
+        return '<span style="color:#9ca3af">—</span>'
+    sign = "+" if val >= 0 else ""
+    color = _GREEN if val > 0 else (_RED if val < 0 else _GRAY)
+    return f'<span style="color:{color};font-weight:600">{sign}{val:.4f}</span>'
+
+
 def _snapshot_signals_section(vix, spread_10y_2y, spreads, lqd_hyg, signals) -> str:
     html = (
         '<h3 style="color:#1a3a5c;margin-top:24px">🔍 Snapshot Signals</h3>'
@@ -238,51 +258,43 @@ def _snapshot_signals_section(vix, spread_10y_2y, spreads, lqd_hyg, signals) -> 
         f'<th style="{_TH_L}">Metric</th>'
         f'<th style="{_TH}">Level</th>'
         f'<th style="{_TH}">1W Δ</th>'
+        f'<th style="{_TH}">1M Δ</th>'
+        f'<th style="{_TH}">1Y Δ</th>'
         f'</tr></thead><tbody>'
     )
     if vix:
-        wc = vix["weekly_change"]
-        sign = "+" if wc >= 0 else ""
-        wc_color = _GREEN if wc < 0 else (_RED if wc > 0 else _GRAY)
-        wc_html = f'<span style="color:{wc_color};font-weight:600">{sign}{wc:.2f} pts</span>'
         html += (
             f'<tr><td style="{_TD_L}">VIX <span style="font-size:10px;color:#9ca3af">(fear gauge)</span></td>'
             f'<td style="{_TD}">{vix["value"]:.2f}</td>'
-            f'<td style="{_TD}">{wc_html}</td></tr>'
+            f'<td style="{_TD}">{_vix_chg(vix.get("weekly_change"))}</td>'
+            f'<td style="{_TD}">{_vix_chg(vix.get("one_month_change"))}</td>'
+            f'<td style="{_TD}">{_vix_chg(vix.get("one_year_change"))}</td></tr>'
         )
     if spread_10y_2y:
-        wc_10y2y = spread_10y_2y["weekly_bps"]
-        if wc_10y2y is None:
-            wc_10y2y_html = '<span style="color:#9ca3af">—</span>'
-        else:
-            sign = "+" if wc_10y2y >= 0 else ""
-            color = _GREEN if wc_10y2y > 0 else (_RED if wc_10y2y < 0 else _GRAY)
-            wc_10y2y_html = f'<span style="color:{color};font-weight:600">{sign}{wc_10y2y:.1f} bps</span>'
         html += (
             f'<tr><td style="{_TD_L}">10Y–2Y Spread</td>'
             f'<td style="{_TD}">{spread_10y_2y["value"]} bps</td>'
-            f'<td style="{_TD}">{wc_10y2y_html}</td></tr>'
+            f'<td style="{_TD}">{_bps(spread_10y_2y.get("weekly_bps"))}</td>'
+            f'<td style="{_TD}">{_bps(spread_10y_2y.get("one_month_bps"))}</td>'
+            f'<td style="{_TD}">{_bps(spread_10y_2y.get("one_year_bps"))}</td></tr>'
         )
     for name, d in spreads:
         if d:
             html += (
                 f'<tr><td style="{_TD_L}">{name}</td>'
                 f'<td style="{_TD}">{d["value"] * 100:.0f} bps</td>'
-                f'<td style="{_TD}">{_bps(d["weekly_bps"])}</td></tr>'
+                f'<td style="{_TD}">{_bps(d.get("weekly_bps"))}</td>'
+                f'<td style="{_TD}">{_bps(d.get("one_month_bps"))}</td>'
+                f'<td style="{_TD}">{_bps(d.get("one_year_bps"))}</td></tr>'
             )
     if lqd_hyg:
-        wc = lqd_hyg["weekly_change"]
-        if wc is not None:
-            sign = "+" if wc >= 0 else ""
-            wc_color = _GREEN if wc > 0 else (_RED if wc < 0 else _GRAY)
-            wc_html = f'<span style="color:{wc_color};font-weight:600">{sign}{wc:.4f}</span>'
-        else:
-            wc_html = '<span style="color:#9ca3af">—</span>'
         lqd_hyg_label = f'LQD / HYG <span style="font-size:10px;color:#9ca3af">(↑ = risk-off, ↓ = risk-on)</span>'
         html += (
             f'<tr><td style="{_TD_L}">{lqd_hyg_label}</td>'
             f'<td style="{_TD}">{lqd_hyg["ratio"]:.4f}</td>'
-            f'<td style="{_TD}">{wc_html}</td></tr>'
+            f'<td style="{_TD}">{_ratio_chg(lqd_hyg.get("weekly_change"))}</td>'
+            f'<td style="{_TD}">{_ratio_chg(lqd_hyg.get("one_month_change"))}</td>'
+            f'<td style="{_TD}">{_ratio_chg(lqd_hyg.get("one_year_change"))}</td></tr>'
         )
     if signals:
         for name, d in signals:
@@ -290,22 +302,17 @@ def _snapshot_signals_section(vix, spread_10y_2y, spreads, lqd_hyg, signals) -> 
             label = (f'{name} <span style="font-size:10px;color:#9ca3af">({desc})</span>'
                      if desc else name)
             if d:
-                wc = d["weekly_change"]
-                if wc is not None:
-                    sign = "+" if wc >= 0 else ""
-                    wc_color = _GREEN if wc > 0 else (_RED if wc < 0 else _GRAY)
-                    wc_html = f'<span style="color:{wc_color};font-weight:600">{sign}{wc:.4f}</span>'
-                else:
-                    wc_html = '<span style="color:#9ca3af">—</span>'
                 html += (
                     f'<tr><td style="{_TD_L}">{label}</td>'
                     f'<td style="{_TD}">{d["ratio"]:.4f}</td>'
-                    f'<td style="{_TD}">{wc_html}</td></tr>'
+                    f'<td style="{_TD}">{_ratio_chg(d.get("weekly_change"))}</td>'
+                    f'<td style="{_TD}">{_ratio_chg(d.get("one_month_change"))}</td>'
+                    f'<td style="{_TD}">{_ratio_chg(d.get("one_year_change"))}</td></tr>'
                 )
             else:
                 html += (
                     f'<tr><td style="{_TD_L}">{label}</td>'
-                    f'<td style="{_TD}" colspan="2"><span style="color:#9ca3af">data unavailable</span></td></tr>'
+                    f'<td style="{_TD}" colspan="4"><span style="color:#9ca3af">data unavailable</span></td></tr>'
                 )
     html += "</tbody></table>"
     return html
@@ -319,7 +326,9 @@ def _yields_table(us_yields, sovereign) -> str:
         f'<thead><tr>'
         f'<th style="{_TH_L}">Instrument</th>'
         f'<th style="{_TH}">Yield (%)</th>'
-        f'<th style="{_TH}">Δ (bps)</th>'
+        f'<th style="{_TH}">1W Δ</th>'
+        f'<th style="{_TH}">1M Δ</th>'
+        f'<th style="{_TH}">1Y Δ</th>'
         f'</tr></thead><tbody>'
     )
     for name, d in us_yields:
@@ -327,22 +336,26 @@ def _yields_table(us_yields, sovereign) -> str:
             html += (
                 f'<tr><td style="{_TD_L}">{name}</td>'
                 f'<td style="{_TD}">{d["value"]:.2f}%</td>'
-                f'<td style="{_TD}">{_bps(d["weekly_bps"])}</td></tr>'
+                f'<td style="{_TD}">{_bps(d.get("weekly_bps"))}</td>'
+                f'<td style="{_TD}">{_bps(d.get("one_month_bps"))}</td>'
+                f'<td style="{_TD}">{_bps(d.get("one_year_bps"))}</td></tr>'
             )
         else:
-            html += f'<tr><td style="{_TD_L}">{name}</td><td style="{_TD}" colspan="2">—</td></tr>'
+            html += f'<tr><td style="{_TD_L}">{name}</td><td style="{_TD}" colspan="4">—</td></tr>'
     for name, d in sovereign:
         label = f'{name} <span style="font-size:10px;color:#cbd5e1">†</span>'
         if d:
             html += (
                 f'<tr><td style="{_TD_L}">{label}</td>'
                 f'<td style="{_TD}">{d["value"]:.2f}%</td>'
-                f'<td style="{_TD}">{_bps(d["weekly_bps"])}</td></tr>'
+                f'<td style="{_TD}">{_bps(d.get("weekly_bps"))}</td>'
+                f'<td style="{_TD}">{_bps(d.get("one_month_bps"))}</td>'
+                f'<td style="{_TD}">{_bps(d.get("one_year_bps"))}</td></tr>'
             )
         else:
-            html += f'<tr><td style="{_TD_L}">{label}</td><td style="{_TD}" colspan="2">—</td></tr>'
+            html += f'<tr><td style="{_TD_L}">{label}</td><td style="{_TD}" colspan="4">—</td></tr>'
     html += '</tbody></table>'
-    html += '<p style="font-size:10px;color:#9ca3af;margin:2px 0 10px">† Monthly FRED data — Δ is month-over-month</p>'
+    html += '<p style="font-size:10px;color:#9ca3af;margin:2px 0 10px">† Monthly FRED data — 1W Δ = MoM, 1M Δ = MoM, 1Y Δ = 12M change</p>'
     return html
 
 
@@ -416,9 +429,13 @@ def _format_data_for_prompt(data: Dict) -> str:
         wc = f", WoW: {s['weekly_bps']:+.1f} bps" if s.get("weekly_bps") is not None else ""
         parts.append(f"10Y-2Y Spread: {s['value']} bps{wc}")
 
+    def _chg(d, key, suffix="bps"):
+        v = d.get(key)
+        return f" ({v:+.1f} {suffix})" if v is not None else ""
+
     yield_lines = [
         f"  {n}: {d['value']:.2f}%"
-        + (f" ({d['weekly_bps']:+.1f} bps WoW)" if d.get("weekly_bps") is not None else "")
+        + _chg(d, "weekly_bps") + _chg(d, "one_month_bps", "bps 1M") + _chg(d, "one_year_bps", "bps 1Y")
         for n, d in data.get("us_yields", []) if d
     ]
     if yield_lines:
@@ -426,7 +443,7 @@ def _format_data_for_prompt(data: Dict) -> str:
 
     spread_lines = [
         f"  {n}: {d['value'] * 100:.0f} bps"
-        + (f" ({d['weekly_bps']:+.1f} bps WoW)" if d.get("weekly_bps") is not None else "")
+        + _chg(d, "weekly_bps") + _chg(d, "one_month_bps", "bps 1M") + _chg(d, "one_year_bps", "bps 1Y")
         for n, d in data.get("spreads", []) if d
     ]
     if spread_lines:
@@ -434,32 +451,36 @@ def _format_data_for_prompt(data: Dict) -> str:
 
     if data.get("lqd_hyg_ratio"):
         r = data["lqd_hyg_ratio"]
-        wc = f" (WoW: {r['weekly_change']:+.4f})" if r.get("weekly_change") is not None else ""
-        parts.append(f"LQD/HYG ratio (higher = risk-OFF / flight to safety): {r['ratio']:.4f}{wc}")
+        changes = "".join([
+            f" (1W: {r['weekly_change']:+.4f})"    if r.get("weekly_change")    is not None else "",
+            f" (1M: {r['one_month_change']:+.4f})" if r.get("one_month_change") is not None else "",
+            f" (1Y: {r['one_year_change']:+.4f})"  if r.get("one_year_change")  is not None else "",
+        ])
+        parts.append(f"LQD/HYG ratio (higher = risk-OFF / flight to safety): {r['ratio']:.4f}{changes}")
 
     idx_lines = [
-        f"  {n}: {d['weekly']:+.2f}% WoW, {d['ytd']:+.2f}% YTD"
+        f"  {n}: {d['weekly']:+.2f}% 1W, {d.get('one_month', 0):+.2f}% 1M, {d['ytd']:+.2f}% YTD, {d.get('one_year', 0):+.2f}% 1Y"
         for n, d in data.get("indices", []) if d
     ]
     if idx_lines:
         parts.append("Equity Indices:\n" + "\n".join(idx_lines))
 
     sec_lines = [
-        f"  {n}: {d['weekly']:+.2f}% WoW, {d['ytd']:+.2f}% YTD"
+        f"  {n}: {d['weekly']:+.2f}% 1W, {d.get('one_month', 0):+.2f}% 1M, {d['ytd']:+.2f}% YTD, {d.get('one_year', 0):+.2f}% 1Y"
         for n, d in data.get("sectors", []) if d
     ]
     if sec_lines:
         parts.append("S&P 500 Sectors:\n" + "\n".join(sec_lines))
 
     comm_lines = [
-        f"  {n}: {d['weekly']:+.2f}% WoW (last: {d['last']:,.2f})"
+        f"  {n}: {d['weekly']:+.2f}% 1W, {d.get('one_month', 0):+.2f}% 1M, {d.get('one_year', 0):+.2f}% 1Y"
         for n, d in data.get("commodities", []) if d
     ]
     if comm_lines:
         parts.append("Commodities:\n" + "\n".join(comm_lines))
 
     fx_lines = [
-        f"  {n}: {d['weekly']:+.2f}% WoW (last: {d['last']:.4f})"
+        f"  {n}: {d['weekly']:+.2f}% 1W, {d.get('one_month', 0):+.2f}% 1M"
         for n, d in data.get("fx", []) if d
     ]
     if fx_lines:
@@ -467,7 +488,7 @@ def _format_data_for_prompt(data: Dict) -> str:
 
     sov_lines = [
         f"  {n}: {d['value']:.2f}%"
-        + (f" ({d['weekly_bps']:+.1f} bps MoM)" if d.get("weekly_bps") is not None else "")
+        + _chg(d, "weekly_bps", "bps MoM") + _chg(d, "one_year_bps", "bps 1Y")
         for n, d in data.get("sovereign", []) if d
     ]
     if sov_lines:

@@ -99,9 +99,9 @@ FRED_MONTHLY: List[Tuple[str, str]] = [
 # ── yfinance helpers ───────────────────────────────────────────────────────
 
 def _returns(ticker: str) -> Optional[Dict]:
-    """Return last price + weekly/MTD/YTD % for a Yahoo Finance ticker."""
+    """Return last price + weekly / 1M / YTD / 1Y % for a Yahoo Finance ticker."""
     try:
-        hist = yf.Ticker(ticker).history(period="ytd", auto_adjust=True)
+        hist = yf.Ticker(ticker).history(period="2y", auto_adjust=True)
         if hist.empty or len(hist) < 2:
             return None
         closes = hist["Close"].dropna()
@@ -109,17 +109,19 @@ def _returns(ticker: str) -> Optional[Dict]:
             return None
         last = float(closes.iloc[-1])
 
-        week_base = float(closes.iloc[max(0, len(closes) - 6)])
-        weekly = (last / week_base - 1) * 100
+        week_base     = float(closes.iloc[max(0, len(closes) - 6)])
+        one_month_base = float(closes.iloc[max(0, len(closes) - 22)])
+        one_year_base  = float(closes.iloc[max(0, len(closes) - 252)])
 
-        today = date.today()
-        month_data = closes[closes.index.month == today.month]
-        mtd_base = float(month_data.iloc[0]) if not month_data.empty else float(closes.iloc[0])
-        mtd = (last / mtd_base - 1) * 100
+        weekly    = (last / week_base     - 1) * 100
+        one_month = (last / one_month_base - 1) * 100
+        one_year  = (last / one_year_base  - 1) * 100
 
-        ytd = (last / float(closes.iloc[0]) - 1) * 100
+        ytd_start = closes[closes.index.year == date.today().year]
+        ytd_base  = float(ytd_start.iloc[0]) if not ytd_start.empty else float(closes.iloc[0])
+        ytd = (last / ytd_base - 1) * 100
 
-        return {"last": last, "weekly": weekly, "mtd": mtd, "ytd": ytd}
+        return {"last": last, "weekly": weekly, "one_month": one_month, "ytd": ytd, "one_year": one_year}
     except Exception as e:
         logger.warning(f"yfinance [{ticker}]: {e}")
         return None
@@ -127,15 +129,22 @@ def _returns(ticker: str) -> Optional[Dict]:
 # ── Ratio helpers ─────────────────────────────────────────────────────────
 
 def _ratio(t1: str, t2: str) -> Optional[Dict]:
-    """Return current ratio of two tickers plus its weekly change."""
+    """Return current ratio of two tickers plus weekly / 1M / 1Y changes."""
     try:
-        h1 = yf.Ticker(t1).history(period="ytd", auto_adjust=True)["Close"].dropna()
-        h2 = yf.Ticker(t2).history(period="ytd", auto_adjust=True)["Close"].dropna()
+        h1 = yf.Ticker(t1).history(period="2y", auto_adjust=True)["Close"].dropna()
+        h2 = yf.Ticker(t2).history(period="2y", auto_adjust=True)["Close"].dropna()
         if len(h1) < 2 or len(h2) < 2:
             return None
-        ratio_now  = float(h1.iloc[-1])  / float(h2.iloc[-1])
-        ratio_week = float(h1.iloc[max(0, len(h1) - 6)]) / float(h2.iloc[max(0, len(h2) - 6)])
-        return {"ratio": round(ratio_now, 4), "weekly_change": round(ratio_now - ratio_week, 4)}
+        ratio_now    = float(h1.iloc[-1])                        / float(h2.iloc[-1])
+        ratio_week   = float(h1.iloc[max(0, len(h1) -   6)])    / float(h2.iloc[max(0, len(h2) -   6)])
+        ratio_1month = float(h1.iloc[max(0, len(h1) -  22)])    / float(h2.iloc[max(0, len(h2) -  22)])
+        ratio_1year  = float(h1.iloc[max(0, len(h1) - 252)])    / float(h2.iloc[max(0, len(h2) - 252)])
+        return {
+            "ratio":             round(ratio_now, 4),
+            "weekly_change":     round(ratio_now - ratio_week,   4),
+            "one_month_change":  round(ratio_now - ratio_1month, 4),
+            "one_year_change":   round(ratio_now - ratio_1year,  4),
+        }
     except Exception as e:
         logger.warning(f"ratio [{t1}/{t2}]: {e}")
         return None
@@ -143,7 +152,7 @@ def _ratio(t1: str, t2: str) -> Optional[Dict]:
 # ── FRED helpers ───────────────────────────────────────────────────────────
 
 def _fred(series_id: str, api_key: str, monthly: bool = False) -> Optional[Dict]:
-    """Fetch latest observation (and weekly Δ for daily series) from FRED."""
+    """Fetch latest observation plus weekly / 1M / 1Y Δ (bps) from FRED."""
     try:
         r = requests.get(
             "https://api.stlouisfed.org/fred/series/observations",
@@ -152,7 +161,7 @@ def _fred(series_id: str, api_key: str, monthly: bool = False) -> Optional[Dict]
                 "api_key": api_key,
                 "file_type": "json",
                 "sort_order": "desc",
-                "limit": 30,
+                "limit": 400,
             },
             timeout=10,
         )
@@ -165,18 +174,24 @@ def _fred(series_id: str, api_key: str, monthly: bool = False) -> Optional[Dict]
         if not obs:
             return None
         latest = obs[0][1]
+
+        def _bps_delta(idx: int) -> Optional[float]:
+            if len(obs) > idx:
+                return round((latest - obs[idx][1]) * 100, 1)
+            return None
+
         if monthly:
-            prev = obs[1][1] if len(obs) > 1 else None
             return {
-                "value": round(latest, 2),
-                "weekly_bps": round((latest - prev) * 100, 1) if prev is not None else None,
+                "value":          round(latest, 2),
+                "weekly_bps":     _bps_delta(1),
+                "one_month_bps":  _bps_delta(1),   # monthly series: prior month ≈ 1M
+                "one_year_bps":   _bps_delta(12),
             }
-        if len(obs) < 6:
-            return {"value": round(latest, 2), "weekly_bps": None}
-        week_ago = obs[min(5, len(obs) - 1)][1]
         return {
-            "value": round(latest, 2),
-            "weekly_bps": round((latest - week_ago) * 100, 1),
+            "value":          round(latest, 2),
+            "weekly_bps":     _bps_delta(5),
+            "one_month_bps":  _bps_delta(22),
+            "one_year_bps":   _bps_delta(252),
         }
     except Exception as e:
         logger.warning(f"FRED [{series_id}]: {e}")
@@ -241,13 +256,14 @@ def fetch_all(fred_api_key: str) -> Dict:
     d_2y  = next((d for n, d in us_yields if n == "US 2Y"),  None)
     d_10y = next((d for n, d in us_yields if n == "US 10Y"), None)
     if d_2y and d_10y:
+        def _spread_bps(key):
+            a, b = d_10y.get(key), d_2y.get(key)
+            return round(a - b, 1) if a is not None and b is not None else None
         spread_10y_2y = {
-            "value": round((d_10y["value"] - d_2y["value"]) * 100, 1),
-            "weekly_bps": (
-                round(d_10y["weekly_bps"] - d_2y["weekly_bps"], 1)
-                if d_10y["weekly_bps"] is not None and d_2y["weekly_bps"] is not None
-                else None
-            ),
+            "value":          round((d_10y["value"] - d_2y["value"]) * 100, 1),
+            "weekly_bps":     _spread_bps("weekly_bps"),
+            "one_month_bps":  _spread_bps("one_month_bps"),
+            "one_year_bps":   _spread_bps("one_year_bps"),
         }
     else:
         spread_10y_2y = None
@@ -256,10 +272,17 @@ def fetch_all(fred_api_key: str) -> Dict:
     signals  = [(name, _ratio(t1, t2)) for name, t1, t2 in SIGNAL_RATIOS]
 
     try:
-        vix_hist = yf.Ticker("^VIX").history(period="ytd", auto_adjust=True)["Close"].dropna()
-        vix_now  = float(vix_hist.iloc[-1])
-        vix_week = float(vix_hist.iloc[max(0, len(vix_hist) - 6)])
-        vix_data = {"value": round(vix_now, 2), "weekly_change": round(vix_now - vix_week, 2)}
+        vix_hist  = yf.Ticker("^VIX").history(period="2y", auto_adjust=True)["Close"].dropna()
+        vix_now   = float(vix_hist.iloc[-1])
+        vix_week  = float(vix_hist.iloc[max(0, len(vix_hist) -   6)])
+        vix_1m    = float(vix_hist.iloc[max(0, len(vix_hist) -  22)])
+        vix_1y    = float(vix_hist.iloc[max(0, len(vix_hist) - 252)])
+        vix_data  = {
+            "value":            round(vix_now, 2),
+            "weekly_change":    round(vix_now - vix_week, 2),
+            "one_month_change": round(vix_now - vix_1m,   2),
+            "one_year_change":  round(vix_now - vix_1y,   2),
+        }
     except Exception:
         vix_data = None
 
