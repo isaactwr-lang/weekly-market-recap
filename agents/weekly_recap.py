@@ -234,6 +234,15 @@ _SIGNAL_DESCRIPTIONS = {
 }
 
 
+def _spread_chg(val: Optional[float]) -> str:
+    """Color for 10Y-2Y spread: steepening (positive Δ) = green, inverting (negative Δ) = red."""
+    if val is None:
+        return '<span style="color:#9ca3af">—</span>'
+    sign = "+" if val >= 0 else ""
+    color = _GREEN if val > 0 else (_RED if val < 0 else _GRAY)
+    return f'<span style="color:{color};font-weight:600">{sign}{val:.1f} bps</span>'
+
+
 def _vix_chg(val: Optional[float]) -> str:
     if val is None:
         return '<span style="color:#9ca3af">—</span>'
@@ -272,11 +281,11 @@ def _snapshot_signals_section(vix, spread_10y_2y, spreads, lqd_hyg, signals) -> 
         )
     if spread_10y_2y:
         html += (
-            f'<tr><td style="{_TD_L}">10Y–2Y Spread</td>'
+            f'<tr><td style="{_TD_L}">10Y–2Y Spread <span style="font-size:10px;color:#9ca3af">(↑ = steepening)</span></td>'
             f'<td style="{_TD}">{spread_10y_2y["value"]} bps</td>'
-            f'<td style="{_TD}">{_bps(spread_10y_2y.get("weekly_bps"))}</td>'
-            f'<td style="{_TD}">{_bps(spread_10y_2y.get("one_month_bps"))}</td>'
-            f'<td style="{_TD}">{_bps(spread_10y_2y.get("one_year_bps"))}</td></tr>'
+            f'<td style="{_TD}">{_spread_chg(spread_10y_2y.get("weekly_bps"))}</td>'
+            f'<td style="{_TD}">{_spread_chg(spread_10y_2y.get("one_month_bps"))}</td>'
+            f'<td style="{_TD}">{_spread_chg(spread_10y_2y.get("one_year_bps"))}</td></tr>'
         )
     for name, d in spreads:
         if d:
@@ -533,9 +542,12 @@ def _format_calendar_for_prompt(calendar: Dict) -> str:
 
 
 def _md_to_html(text: str) -> str:
-    """Convert basic markdown bold/italic to HTML (LLMs often emit markdown despite HTML prompts)."""
+    """Convert basic markdown bold/italic to HTML and strip LLM formatting artifacts."""
     text = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', text, flags=re.DOTALL)
     text = re.sub(r'\*(.+?)\*',     r'<em>\1</em>', text, flags=re.DOTALL)
+    # Remove empty <p> tags that create unwanted gaps between section headers and bullet lists
+    text = re.sub(r'<p>\s*(&nbsp;)?\s*</p>', '', text, flags=re.IGNORECASE)
+    text = re.sub(r'<br\s*/?>\s*<br\s*/?>', '', text, flags=re.IGNORECASE)
     return text
 
 
