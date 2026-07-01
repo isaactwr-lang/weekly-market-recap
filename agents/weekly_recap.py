@@ -228,9 +228,9 @@ _COUNTRY_NAMES = {
 }
 
 _SIGNAL_DESCRIPTIONS = {
-    "VXN / VIX": "Nasdaq vs broad market vol",
-    "RSP / SPY":  "market breadth",
-    "IWD / IWF":  "value vs growth",
+    "VXN / VIX": "Nasdaq vs broad vol · ↑ = more tech stress",
+    "RSP / SPY":  "market breadth · ↑ = better breadth",
+    "IWD / IWF":  "value vs growth · ↑ = value leads",
 }
 
 
@@ -241,6 +241,15 @@ def _spread_chg(val: Optional[float]) -> str:
     sign = "+" if val >= 0 else ""
     color = _GREEN if val > 0 else (_RED if val < 0 else _GRAY)
     return f'<span style="color:{color};font-weight:600">{sign}{val:.1f} bps</span>'
+
+
+def _risk_off_chg(val: Optional[float]) -> str:
+    """For risk-off signals (LQD/HYG, VXN/VIX): rising = red (more stress/safety demand), falling = green."""
+    if val is None:
+        return '<span style="color:#9ca3af">—</span>'
+    sign = "+" if val >= 0 else ""
+    color = _RED if val > 0 else (_GREEN if val < 0 else _GRAY)
+    return f'<span style="color:{color};font-weight:600">{sign}{val:.4f}</span>'
 
 
 def _vix_chg(val: Optional[float]) -> str:
@@ -301,22 +310,24 @@ def _snapshot_signals_section(vix, spread_10y_2y, spreads, lqd_hyg, signals) -> 
         html += (
             f'<tr><td style="{_TD_L}">{lqd_hyg_label}</td>'
             f'<td style="{_TD}">{lqd_hyg["ratio"]:.4f}</td>'
-            f'<td style="{_TD}">{_ratio_chg(lqd_hyg.get("weekly_change"))}</td>'
-            f'<td style="{_TD}">{_ratio_chg(lqd_hyg.get("one_month_change"))}</td>'
-            f'<td style="{_TD}">{_ratio_chg(lqd_hyg.get("one_year_change"))}</td></tr>'
+            f'<td style="{_TD}">{_risk_off_chg(lqd_hyg.get("weekly_change"))}</td>'
+            f'<td style="{_TD}">{_risk_off_chg(lqd_hyg.get("one_month_change"))}</td>'
+            f'<td style="{_TD}">{_risk_off_chg(lqd_hyg.get("one_year_change"))}</td></tr>'
         )
+    _RISK_OFF_SIGNALS = {"VXN / VIX"}
     if signals:
         for name, d in signals:
             desc = _SIGNAL_DESCRIPTIONS.get(name, "")
             label = (f'{name} <span style="font-size:10px;color:#9ca3af">({desc})</span>'
                      if desc else name)
+            chg_fn = _risk_off_chg if name in _RISK_OFF_SIGNALS else _ratio_chg
             if d:
                 html += (
                     f'<tr><td style="{_TD_L}">{label}</td>'
                     f'<td style="{_TD}">{d["ratio"]:.4f}</td>'
-                    f'<td style="{_TD}">{_ratio_chg(d.get("weekly_change"))}</td>'
-                    f'<td style="{_TD}">{_ratio_chg(d.get("one_month_change"))}</td>'
-                    f'<td style="{_TD}">{_ratio_chg(d.get("one_year_change"))}</td></tr>'
+                    f'<td style="{_TD}">{chg_fn(d.get("weekly_change"))}</td>'
+                    f'<td style="{_TD}">{chg_fn(d.get("one_month_change"))}</td>'
+                    f'<td style="{_TD}">{chg_fn(d.get("one_year_change"))}</td></tr>'
                 )
             else:
                 html += (
@@ -431,12 +442,21 @@ def _format_data_for_prompt(data: Dict) -> str:
 
     if data.get("vix"):
         v = data["vix"]
-        parts.append(f"VIX: {v['value']:.2f} (weekly change: {v['weekly_change']:+.2f} pts)")
+        chgs = "".join([
+            f" (1W: {v['weekly_change']:+.2f})"                                       if v.get("weekly_change")    is not None else "",
+            f" (1M: {v['one_month_change']:+.2f})"                                     if v.get("one_month_change") is not None else "",
+            f" (1Y: {v['one_year_change']:+.2f})"                                      if v.get("one_year_change")  is not None else "",
+        ])
+        parts.append(f"VIX: {v['value']:.2f}{chgs}")
 
     if data.get("spread_10y_2y"):
         s = data["spread_10y_2y"]
-        wc = f", WoW: {s['weekly_bps']:+.1f} bps" if s.get("weekly_bps") is not None else ""
-        parts.append(f"10Y-2Y Spread: {s['value']} bps{wc}")
+        chgs = "".join([
+            f" (1W: {s['weekly_bps']:+.1f} bps)"    if s.get("weekly_bps")    is not None else "",
+            f" (1M: {s['one_month_bps']:+.1f} bps)"  if s.get("one_month_bps") is not None else "",
+            f" (1Y: {s['one_year_bps']:+.1f} bps)"   if s.get("one_year_bps")  is not None else "",
+        ])
+        parts.append(f"10Y-2Y Spread: {s['value']} bps{chgs} (positive = normal curve, negative = inverted)")
 
     def _chg(d, key, suffix="bps"):
         v = d.get(key)
