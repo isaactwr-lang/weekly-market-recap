@@ -99,6 +99,15 @@ FRED_MONTHLY: List[Tuple[str, str]] = [
 
 # ── yfinance helpers ───────────────────────────────────────────────────────
 
+def _clip(closes: pd.Series, as_of: Optional[date]) -> pd.Series:
+    """Trim a close series to data on or before as_of (inclusive)."""
+    if as_of is None:
+        return closes
+    tz      = closes.index.tz
+    cutoff  = pd.Timestamp(as_of + timedelta(days=1), tz=tz) if tz else pd.Timestamp(as_of + timedelta(days=1))
+    return closes[closes.index < cutoff]
+
+
 def _prior_week_base(closes: pd.Series) -> float:
     """Last close of the prior calendar week — correct even when the current week is shortened by a holiday."""
     last_date  = closes.index[-1].date()
@@ -109,13 +118,13 @@ def _prior_week_base(closes: pd.Series) -> float:
     return float(prior.iloc[-1]) if not prior.empty else float(closes.iloc[0])
 
 
-def _returns(ticker: str) -> Optional[Dict]:
+def _returns(ticker: str, as_of: Optional[date] = None) -> Optional[Dict]:
     """Return last price + weekly / 1M / YTD / 1Y % for a Yahoo Finance ticker."""
     try:
         hist = yf.Ticker(ticker).history(period="2y", auto_adjust=True)
         if hist.empty or len(hist) < 2:
             return None
-        closes = hist["Close"].dropna()
+        closes = _clip(hist["Close"].dropna(), as_of)
         if len(closes) < 2:
             return None
         last = float(closes.iloc[-1])
@@ -139,11 +148,11 @@ def _returns(ticker: str) -> Optional[Dict]:
 
 # ── Ratio helpers ─────────────────────────────────────────────────────────
 
-def _ratio(t1: str, t2: str) -> Optional[Dict]:
+def _ratio(t1: str, t2: str, as_of: Optional[date] = None) -> Optional[Dict]:
     """Return current ratio of two tickers plus weekly / 1M / 1Y changes."""
     try:
-        h1 = yf.Ticker(t1).history(period="2y", auto_adjust=True)["Close"].dropna()
-        h2 = yf.Ticker(t2).history(period="2y", auto_adjust=True)["Close"].dropna()
+        h1 = _clip(yf.Ticker(t1).history(period="2y", auto_adjust=True)["Close"].dropna(), as_of)
+        h2 = _clip(yf.Ticker(t2).history(period="2y", auto_adjust=True)["Close"].dropna(), as_of)
         if len(h1) < 2 or len(h2) < 2:
             return None
         ratio_now    = float(h1.iloc[-1])           / float(h2.iloc[-1])
@@ -162,7 +171,7 @@ def _ratio(t1: str, t2: str) -> Optional[Dict]:
 
 # ── FRED helpers ───────────────────────────────────────────────────────────
 
-def _fred(series_id: str, api_key: str, monthly: bool = False) -> Optional[Dict]:
+def _fred(series_id: str, api_key: str, monthly: bool = False, as_of: Optional[date] = None) -> Optional[Dict]:
     """Fetch latest observation plus weekly / 1M / 1Y Δ (bps) from FRED."""
     try:
         r = requests.get(
@@ -181,6 +190,7 @@ def _fred(series_id: str, api_key: str, monthly: bool = False) -> Optional[Dict]
             (o["date"], float(o["value"]))
             for o in r.json()["observations"]
             if o["value"] != "."
+            and (as_of is None or date.fromisoformat(o["date"]) <= as_of)
         ]
         if not obs:
             return None
@@ -255,18 +265,21 @@ def fetch_economic_calendar() -> Dict:
 
 # ── Main entry point ───────────────────────────────────────────────────────
 
-def fetch_all(fred_api_key: str) -> Dict:
-    logger.info("Fetching market data (yfinance + FRED)...")
+def fetch_all(fred_api_key: str, as_of: Optional[date] = None) -> Dict:
+    if as_of:
+        logger.info(f"Fetching market data as of {as_of} (yfinance + FRED)...")
+    else:
+        logger.info("Fetching market data (yfinance + FRED)...")
 
-    indices     = [(n, _returns(t)) for n, t in INDICES]
-    commodities = [(n, _returns(t)) for n, t in COMMODITIES]
-    bond_etfs   = [(n, _returns(t)) for n, t in BOND_ETFS]
-    fx          = [(n, _returns(t)) for n, t in FX_PAIRS]
-    crypto      = [(n, _returns(t)) for n, t in CRYPTO]
-    sectors     = [(n, _returns(t)) for n, t in SECTORS]
+    indices     = [(n, _returns(t, as_of)) for n, t in INDICES]
+    commodities = [(n, _returns(t, as_of)) for n, t in COMMODITIES]
+    bond_etfs   = [(n, _returns(t, as_of)) for n, t in BOND_ETFS]
+    fx          = [(n, _returns(t, as_of)) for n, t in FX_PAIRS]
+    crypto      = [(n, _returns(t, as_of)) for n, t in CRYPTO]
+    sectors     = [(n, _returns(t, as_of)) for n, t in SECTORS]
 
-    yields_daily   = [(n, _fred(s, fred_api_key))               for n, s in FRED_DAILY]
-    yields_monthly = [(n, _fred(s, fred_api_key, monthly=True))  for n, s in FRED_MONTHLY]
+    yields_daily   = [(n, _fred(s, fred_api_key, as_of=as_of))              for n, s in FRED_DAILY]
+    yields_monthly = [(n, _fred(s, fred_api_key, monthly=True, as_of=as_of)) for n, s in FRED_MONTHLY]
 
     us_yields = [(n, d) for n, d in yields_daily if "Spread" not in n]
     spreads   = [(n, d) for n, d in yields_daily if "Spread" in n]
@@ -286,11 +299,11 @@ def fetch_all(fred_api_key: str) -> Dict:
     else:
         spread_10y_2y = None
 
-    lqd_hyg = _ratio("LQD", "HYG")
-    signals  = [(name, _ratio(t1, t2)) for name, t1, t2 in SIGNAL_RATIOS]
+    lqd_hyg = _ratio("LQD", "HYG", as_of)
+    signals  = [(name, _ratio(t1, t2, as_of)) for name, t1, t2 in SIGNAL_RATIOS]
 
     try:
-        vix_hist  = yf.Ticker("^VIX").history(period="2y", auto_adjust=True)["Close"].dropna()
+        vix_hist  = _clip(yf.Ticker("^VIX").history(period="2y", auto_adjust=True)["Close"].dropna(), as_of)
         vix_now   = float(vix_hist.iloc[-1])
         vix_week  = _prior_week_base(vix_hist)
         vix_1m    = float(vix_hist.iloc[max(0, len(vix_hist) -  22)])

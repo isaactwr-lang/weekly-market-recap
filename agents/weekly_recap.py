@@ -821,9 +821,20 @@ class WeeklyRecapAgent:
         date_str = datetime.now(sgt).strftime("%B %d, %Y")
         subject  = f"🌍 Weekly Market Recap & Outlook — {date_str}"
 
+        # Optional backdated run: set RUN_AS_OF=YYYY-MM-DD to simulate a past Monday's data
+        as_of = None
+        as_of_str = os.getenv("RUN_AS_OF", "").strip()
+        if as_of_str:
+            try:
+                from datetime import date as _date
+                as_of = _date.fromisoformat(as_of_str)
+                logger.info(f"Backdated run: data clipped to {as_of}")
+            except ValueError:
+                logger.warning(f"RUN_AS_OF='{as_of_str}' is not a valid YYYY-MM-DD date — ignoring")
+
         articles = self.fetch_all_articles()
         fred_key = os.getenv("FRED_API_KEY", "")
-        data     = fetch_all(fred_key)
+        data     = fetch_all(fred_key, as_of=as_of)
 
         review_html     = self.summarise_weekly_review(articles, data)
         week_ahead_html = self.summarise_week_ahead(articles, data)

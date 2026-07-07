@@ -4,6 +4,11 @@ on:
   schedule:
     - cron: "0 1 * * 1"  # 9:00 AM SGT (UTC+8) every Monday
   workflow_dispatch:
+    inputs:
+      as_of_date:
+        description: "Simulate run as of this date (YYYY-MM-DD). Leave blank for latest data."
+        required: false
+        default: ""
 
 jobs:
   recap:
@@ -31,4 +36,5 @@ jobs:
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
           RECIPIENT_EMAIL: ${{ secrets.RECIPIENT_EMAIL }}
           FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
+          RUN_AS_OF: ${{ github.event.inputs.as_of_date }}
         run: python agents/weekly_recap.py
