@@ -794,7 +794,7 @@ class WeeklyRecapAgent:
         msg = MIMEMultipart("alternative")
         msg["Subject"] = subject
         msg["From"]    = sender
-        msg["To"]      = ", ".join(recipients)
+        msg["To"]      = sender   # recipients delivered via BCC — not visible to each other
         msg.attach(MIMEText(html, "html"))
 
         with smtplib.SMTP("smtp.gmail.com", 587) as server:
