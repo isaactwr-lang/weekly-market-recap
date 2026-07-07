@@ -41,7 +41,7 @@ _SOURCE_EJONES = (
     "https://www.edwardjones.com/us-en/market-news-insights/stock-market-news/"
     "stock-market-weekly-update"
 )
-_SOURCE_SCHWAB = "https://www.schwab.com.sg/story/weekly-traders-outlook"
+_SOURCE_SCHWAB = "https://www.schwab.com/learn/story/weekly-traders-outlook"
 
 _SOURCES = [
     ("T. Rowe Price",  _SOURCE_TROWE),
@@ -637,7 +637,7 @@ class WeeklyRecapAgent:
             logger.info(f"Fetching {label}...")
             r = requests.get(
                 url,
-                headers={"User-Agent": "Mozilla/5.0 (compatible; weekly-recap/1.0)"},
+                headers={"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"},
                 timeout=15,
             )
             r.raise_for_status()
