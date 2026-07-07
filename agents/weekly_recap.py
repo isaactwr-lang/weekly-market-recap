@@ -68,8 +68,10 @@ ATTRIBUTION FORMAT — always place the source citation at the END of the senten
 ✗ "<span style="color:#9ca3af;font-size:11px">(T. Rowe Price)</span> reported that the labor market showed signs of cooling."
 Never use the source as the subject or actor of a sentence. Never write "as reported by", "according to", "as noted by", or any similar phrasing.
 
+NOTE ON SOURCE CONTENT: Sources do not always publish a standard weekly recap. They sometimes publish themed or strategic pieces (e.g. "Three trends to watch in H2", sector outlooks, macro regime shifts). When a source does this, extract and incorporate those insights — do not skip or downplay themed content. Use whatever each source actually provides.
+
 Write a comprehensive weekly review in HTML. Rules:
-- Use <h3> for section headers (include a flag emoji)
+- Use <h3> for section headers (include a relevant emoji)
 - Use <ul><li> for bullet points (3–5 per section)
 - Bold (<b>) any percentage moves, rate decisions, or key data figures — use the actual numbers provided
 - Sections (in this order):
@@ -77,6 +79,7 @@ Write a comprehensive weekly review in HTML. Rules:
     🇺🇸 U.S. Markets
     🌐 Global Markets
     📊 Cross-Asset Themes — synthesize what bond, FX, and commodity moves collectively signal about macro conditions and risk appetite; apply the metric interpretation guide above
+    🔭 Strategic Outlook — include this section ONLY if any source published a themed or forward-looking piece (e.g. H2 outlook, sector rotation thesis, macro regime shift). Summarise the key strategic insights in 3–5 bullets. Omit this section entirely if no source provided thematic content.
 - Start directly with the first <h3> tag — no preamble"""
 
 
