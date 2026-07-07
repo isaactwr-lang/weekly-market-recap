@@ -63,9 +63,10 @@ METRIC INTERPRETATION GUIDE — apply these definitions precisely when interpret
 - Credit spreads (HY Spread, IG Spread): WIDENING = risk-off; TIGHTENING = risk-on
 - 10Y-2Y Spread: deeply negative = inversion / recession signal; moving toward zero or positive = curve normalising
 
-ATTRIBUTION FORMAT — when attributing a claim to a specific source, use inline greyed HTML only:
-<span style="color:#9ca3af;font-size:11px">(T. Rowe Price)</span>
-Never write "as reported by", "according to", "as noted by", or any similar phrasing.
+ATTRIBUTION FORMAT — always place the source citation at the END of the sentence, never at the start or middle:
+✓ "The labor market showed signs of cooling. <span style="color:#9ca3af;font-size:11px">(T. Rowe Price)</span>"
+✗ "<span style="color:#9ca3af;font-size:11px">(T. Rowe Price)</span> reported that the labor market showed signs of cooling."
+Never use the source as the subject or actor of a sentence. Never write "as reported by", "according to", "as noted by", or any similar phrasing.
 
 Write a comprehensive weekly review in HTML. Rules:
 - Use <h3> for section headers (include a flag emoji)
@@ -107,7 +108,7 @@ Write a concise but substantive week-ahead outlook in HTML using ONLY bullet poi
 </ul>
 
 Keep each bullet to 1–2 sentences. Bold event names, key dates, and consensus figures.
-When attributing a claim to a specific source, use inline greyed HTML: <span style="color:#9ca3af;font-size:11px">(T. Rowe Price)</span> — never write "as noted by" or similar phrasing.
+When attributing a claim to a specific source, always place the citation at the END of the sentence: "...showed resilience. <span style="color:#9ca3af;font-size:11px">(T. Rowe Price)</span>" — never at the start, never write "as noted by" or similar phrasing.
 Start directly with the first <h3> tag — no preamble."""
 
 # ── HTML helpers ───────────────────────────────────────────────────────────
