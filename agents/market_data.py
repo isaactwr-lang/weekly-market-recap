@@ -8,6 +8,7 @@ import os
 from datetime import date, timedelta
 from typing import Dict, List, Optional, Tuple
 
+import pandas as pd
 import requests
 import yfinance as yf
 
@@ -98,6 +99,16 @@ FRED_MONTHLY: List[Tuple[str, str]] = [
 
 # ── yfinance helpers ───────────────────────────────────────────────────────
 
+def _prior_week_base(closes: pd.Series) -> float:
+    """Last close of the prior calendar week — correct even when the current week is shortened by a holiday."""
+    last_date  = closes.index[-1].date()
+    week_start = last_date - timedelta(days=last_date.weekday())   # Monday of current week
+    tz         = closes.index.tz
+    cutoff     = pd.Timestamp(week_start, tz=tz) if tz else pd.Timestamp(week_start)
+    prior      = closes[closes.index < cutoff]
+    return float(prior.iloc[-1]) if not prior.empty else float(closes.iloc[0])
+
+
 def _returns(ticker: str) -> Optional[Dict]:
     """Return last price + weekly / 1M / YTD / 1Y % for a Yahoo Finance ticker."""
     try:
@@ -109,7 +120,7 @@ def _returns(ticker: str) -> Optional[Dict]:
             return None
         last = float(closes.iloc[-1])
 
-        week_base     = float(closes.iloc[max(0, len(closes) - 6)])
+        week_base      = _prior_week_base(closes)
         one_month_base = float(closes.iloc[max(0, len(closes) - 22)])
         one_year_base  = float(closes.iloc[max(0, len(closes) - 252)])
 
@@ -135,8 +146,8 @@ def _ratio(t1: str, t2: str) -> Optional[Dict]:
         h2 = yf.Ticker(t2).history(period="2y", auto_adjust=True)["Close"].dropna()
         if len(h1) < 2 or len(h2) < 2:
             return None
-        ratio_now    = float(h1.iloc[-1])                        / float(h2.iloc[-1])
-        ratio_week   = float(h1.iloc[max(0, len(h1) -   6)])    / float(h2.iloc[max(0, len(h2) -   6)])
+        ratio_now    = float(h1.iloc[-1])           / float(h2.iloc[-1])
+        ratio_week   = _prior_week_base(h1)         / _prior_week_base(h2)
         ratio_1month = float(h1.iloc[max(0, len(h1) -  22)])    / float(h2.iloc[max(0, len(h2) -  22)])
         ratio_1year  = float(h1.iloc[max(0, len(h1) - 252)])    / float(h2.iloc[max(0, len(h2) - 252)])
         return {
@@ -187,9 +198,16 @@ def _fred(series_id: str, api_key: str, monthly: bool = False) -> Optional[Dict]
                 "one_month_bps":  _bps_delta(1),   # monthly series: prior month ≈ 1M
                 "one_year_bps":   _bps_delta(12),
             }
+
+        # Holiday-safe weekly: last obs from the prior calendar week
+        latest_date = date.fromisoformat(obs[0][0])
+        week_start  = latest_date - timedelta(days=latest_date.weekday())
+        prior_week_val = next((v for d_str, v in obs[1:] if date.fromisoformat(d_str) < week_start), None)
+        weekly_bps = round((latest - prior_week_val) * 100, 1) if prior_week_val is not None else None
+
         return {
             "value":          round(latest, 2),
-            "weekly_bps":     _bps_delta(5),
+            "weekly_bps":     weekly_bps,
             "one_month_bps":  _bps_delta(22),
             "one_year_bps":   _bps_delta(252),
         }
@@ -274,7 +292,7 @@ def fetch_all(fred_api_key: str) -> Dict:
     try:
         vix_hist  = yf.Ticker("^VIX").history(period="2y", auto_adjust=True)["Close"].dropna()
         vix_now   = float(vix_hist.iloc[-1])
-        vix_week  = float(vix_hist.iloc[max(0, len(vix_hist) -   6)])
+        vix_week  = _prior_week_base(vix_hist)
         vix_1m    = float(vix_hist.iloc[max(0, len(vix_hist) -  22)])
         vix_1y    = float(vix_hist.iloc[max(0, len(vix_hist) - 252)])
         vix_data  = {
