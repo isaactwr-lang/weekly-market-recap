@@ -9,8 +9,6 @@ Every Monday at 9 AM SGT:
        - What Markets Are Watching This Week  (forward-looking)
   4. Assemble an HTML email and send via Gmail SMTP
 """
-import base64
-import io
 import logging
 import os
 import re
@@ -22,10 +20,6 @@ from email.mime.text import MIMEText
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
-import matplotlib
-matplotlib.use("Agg")   # non-interactive backend — required in GitHub Actions
-import matplotlib.pyplot as plt
-import matplotlib.colors as mcolors
 from groq import Groq
 import pytz
 import requests
@@ -222,72 +216,59 @@ def _sector_alpha_table(sectors: List[Tuple[str, Optional[Dict]]], indices: List
     return header + body + "</tbody></table>" + footer
 
 
-def _sector_heatmap_img(sectors: List[Tuple[str, Optional[Dict]]]) -> str:
-    """Render a sector 1W-return heat map as an inline base64 PNG."""
-    try:
-        valid = [(name, d) for name, d in sectors if d and d.get("weekly") is not None]
-        if not valid:
-            logger.warning("_sector_heatmap_img: no valid sector data")
-            return ""
-
-        names  = [n for n, _ in valid]
-        values = [d["weekly"] for _, d in valid]
-
-        cols = 4
-        rows = -(-len(names) // cols)   # ceiling division
-
-        fig, axs = plt.subplots(rows, cols, figsize=(8, rows * 1.5), squeeze=False)
-        fig.patch.set_facecolor("white")
-
-        cap  = max(abs(v) for v in values) or 1.0
-        norm = mcolors.TwoSlopeNorm(vmin=-cap, vcenter=0, vmax=cap)
-        cmap = plt.cm.RdYlGn
-
-        for idx, (name, val) in enumerate(zip(names, values)):
-            r, c  = divmod(idx, cols)
-            ax    = axs[r][c]
-            color = cmap(norm(val))
-            ax.set_facecolor(color)
-            brightness = 0.299 * color[0] + 0.587 * color[1] + 0.114 * color[2]
-            fg = "black" if brightness > 0.55 else "white"
-            sign = "+" if val >= 0 else ""
-            ax.text(0.5, 0.60, name, ha="center", va="center",
-                    fontsize=8.5, fontweight="bold", color=fg, transform=ax.transAxes,
-                    wrap=False)
-            ax.text(0.5, 0.28, f"{sign}{val:.2f}%", ha="center", va="center",
-                    fontsize=11, color=fg, transform=ax.transAxes)
-            ax.set_xticks([])
-            ax.set_yticks([])
-            for spine in ax.spines.values():
-                spine.set_edgecolor("white")
-                spine.set_linewidth(2.5)
-
-        for idx in range(len(names), rows * cols):
-            r, c = divmod(idx, cols)
-            axs[r][c].set_visible(False)
-
-        fig.suptitle("S&P 500 Sectors — 1W Return", y=1.01,
-                     fontsize=11, fontweight="bold", color="#1a3a5c")
-        plt.tight_layout(pad=0.3)
-
-        buf = io.BytesIO()
-        fig.savefig(buf, format="png", dpi=100, bbox_inches="tight",
-                    facecolor="white", edgecolor="none")
-        plt.close(fig)
-        buf.seek(0)
-        png_bytes = buf.read()
-        b64 = base64.b64encode(png_bytes).decode()
-        logger.info(f"Sector heat map: {len(png_bytes)/1024:.1f}KB PNG → {len(b64)/1024:.1f}KB base64")
-        return (
-            '<h3 style="color:#1a3a5c;margin-top:24px">🗺️ Sector Heat Map</h3>'
-            f'<img src="data:image/png;base64,{b64}" '
-            f'style="width:100%;max-width:700px;border-radius:4px;display:block;" />'
-            '<p style="font-size:10px;color:#9ca3af;margin:4px 0 0">'
-            'Colour intensity scales with magnitude · green = positive · red = negative</p>'
-        )
-    except Exception as e:
-        logger.warning(f"Sector heat map generation failed: {e}")
+def _sector_heatmap_html(sectors: List[Tuple[str, Optional[Dict]]]) -> str:
+    """Render a sector 1W-return heat map as an HTML table (Gmail-compatible)."""
+    valid = [(name, d) for name, d in sectors if d and d.get("weekly") is not None]
+    if not valid:
         return ""
+
+    values = [d["weekly"] for _, d in valid]
+    cap    = max(abs(v) for v in values) or 1.0
+
+    def _cell_colors(val: float) -> tuple:
+        t = max(-1.0, min(1.0, val / cap))
+        if t >= 0:
+            r = round(250 - t * (250 - 21))
+            g = round(250 - t * (250 - 128))
+            b = round(250 - t * (250 - 61))
+        else:
+            t = -t
+            r = round(250 - t * (250 - 185))
+            g = round(250 - t * (250 - 28))
+            b = round(250 - t * (250 - 28))
+        bg = f"#{r:02x}{g:02x}{b:02x}"
+        bright = (0.299 * r + 0.587 * g + 0.114 * b) / 255
+        fg = "#1f2937" if bright > 0.60 else "#ffffff"
+        return bg, fg
+
+    cols       = 4
+    cell_base  = "padding:14px 6px;text-align:center;border:3px solid #ffffff;width:25%"
+    rows_html  = ""
+    for i in range(0, len(valid), cols):
+        chunk = valid[i : i + cols]
+        rows_html += "<tr>"
+        for name, d in chunk:
+            val       = d["weekly"]
+            bg, fg    = _cell_colors(val)
+            sign      = "+" if val >= 0 else ""
+            rows_html += (
+                f'<td style="{cell_base};background:{bg}">'
+                f'<div style="font-size:9px;font-weight:bold;font-family:Arial,sans-serif;color:{fg}">{name}</div>'
+                f'<div style="font-size:13px;font-family:Arial,sans-serif;margin-top:5px;color:{fg}">{sign}{val:.2f}%</div>'
+                f'</td>'
+            )
+        for _ in range(cols - len(chunk)):
+            rows_html += f'<td style="{cell_base};background:#f9fafb"></td>'
+        rows_html += "</tr>"
+
+    return (
+        '<h3 style="color:#1a3a5c;margin-top:24px">🗺️ Sector Heat Map</h3>'
+        '<table style="width:100%;max-width:700px;border-collapse:collapse;table-layout:fixed">'
+        f'{rows_html}'
+        '</table>'
+        '<p style="font-size:10px;color:#9ca3af;margin:4px 0 0">'
+        '1W return · green = positive · red = negative</p>'
+    )
 
 
 _COUNTRY_FLAGS = {
@@ -739,7 +720,7 @@ class WeeklyRecapAgent:
         indices_section     = _returns_table(data["indices"],     "📈 Global Equity Indices")
         sectors_section     = _returns_table(data["sectors"],     "🏭 S&P 500 Sectors (GICS)")
         sectors_alpha       = _sector_alpha_table(data["sectors"], data["indices"])
-        sector_heatmap      = _sector_heatmap_img(data["sectors"])
+        sector_heatmap      = _sector_heatmap_html(data["sectors"])
         bond_etf_section    = _returns_table(data["bond_etfs"],   "Bond ETFs")
         fi_section          = _yields_table(data["us_yields"], data["sovereign"]) + bond_etf_section
         commodities_section = _returns_table(data["commodities"], "🛢️ Commodities")
