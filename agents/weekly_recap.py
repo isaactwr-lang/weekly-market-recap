@@ -224,64 +224,70 @@ def _sector_alpha_table(sectors: List[Tuple[str, Optional[Dict]]], indices: List
 
 def _sector_heatmap_img(sectors: List[Tuple[str, Optional[Dict]]]) -> str:
     """Render a sector 1W-return heat map as an inline base64 PNG."""
-    valid = [(name, d) for name, d in sectors if d and d.get("weekly") is not None]
-    if not valid:
+    try:
+        valid = [(name, d) for name, d in sectors if d and d.get("weekly") is not None]
+        if not valid:
+            logger.warning("_sector_heatmap_img: no valid sector data")
+            return ""
+
+        names  = [n for n, _ in valid]
+        values = [d["weekly"] for _, d in valid]
+
+        cols = 4
+        rows = -(-len(names) // cols)   # ceiling division
+
+        fig, axs = plt.subplots(rows, cols, figsize=(8, rows * 1.5), squeeze=False)
+        fig.patch.set_facecolor("white")
+
+        cap  = max(abs(v) for v in values) or 1.0
+        norm = mcolors.TwoSlopeNorm(vmin=-cap, vcenter=0, vmax=cap)
+        cmap = plt.cm.RdYlGn
+
+        for idx, (name, val) in enumerate(zip(names, values)):
+            r, c  = divmod(idx, cols)
+            ax    = axs[r][c]
+            color = cmap(norm(val))
+            ax.set_facecolor(color)
+            brightness = 0.299 * color[0] + 0.587 * color[1] + 0.114 * color[2]
+            fg = "black" if brightness > 0.55 else "white"
+            sign = "+" if val >= 0 else ""
+            ax.text(0.5, 0.60, name, ha="center", va="center",
+                    fontsize=8.5, fontweight="bold", color=fg, transform=ax.transAxes,
+                    wrap=False)
+            ax.text(0.5, 0.28, f"{sign}{val:.2f}%", ha="center", va="center",
+                    fontsize=11, color=fg, transform=ax.transAxes)
+            ax.set_xticks([])
+            ax.set_yticks([])
+            for spine in ax.spines.values():
+                spine.set_edgecolor("white")
+                spine.set_linewidth(2.5)
+
+        for idx in range(len(names), rows * cols):
+            r, c = divmod(idx, cols)
+            axs[r][c].set_visible(False)
+
+        fig.suptitle("S&P 500 Sectors — 1W Return", y=1.01,
+                     fontsize=11, fontweight="bold", color="#1a3a5c")
+        plt.tight_layout(pad=0.3)
+
+        buf = io.BytesIO()
+        fig.savefig(buf, format="png", dpi=100, bbox_inches="tight",
+                    facecolor="white", edgecolor="none")
+        plt.close(fig)
+        buf.seek(0)
+        png_bytes = buf.read()
+        b64 = base64.b64encode(png_bytes).decode()
+        logger.info(f"Sector heat map: {len(png_bytes)/1024:.1f}KB PNG → {len(b64)/1024:.1f}KB base64")
+        return (
+            '<h3 style="color:#1a3a5c;margin-top:24px">🗺️ Sector Heat Map</h3>'
+            f'<img src="data:image/png;base64,{b64}" '
+            f'style="width:100%;max-width:700px;border-radius:4px;display:block;" />'
+            '<p style="font-size:10px;color:#9ca3af;margin:4px 0 0">'
+            'Colour intensity scales with magnitude · green = positive · red = negative</p>'
+        )
+    except Exception as e:
+        logger.warning(f"Sector heat map generation failed: {e}")
         return ""
-
-    names  = [n for n, _ in valid]
-    values = [d["weekly"] for _, d in valid]
-
-    cols = 4
-    rows = -(-len(names) // cols)   # ceiling division
-
-    fig, axs = plt.subplots(rows, cols, figsize=(8, rows * 1.5), squeeze=False)
-    fig.patch.set_facecolor("white")
-
-    cap  = max(abs(v) for v in values) or 1.0
-    norm = mcolors.TwoSlopeNorm(vmin=-cap, vcenter=0, vmax=cap)
-    cmap = plt.cm.RdYlGn
-
-    for idx, (name, val) in enumerate(zip(names, values)):
-        r, c  = divmod(idx, cols)
-        ax    = axs[r][c]
-        color = cmap(norm(val))
-        ax.set_facecolor(color)
-        brightness = 0.299 * color[0] + 0.587 * color[1] + 0.114 * color[2]
-        fg = "black" if brightness > 0.55 else "white"
-        sign = "+" if val >= 0 else ""
-        ax.text(0.5, 0.60, name, ha="center", va="center",
-                fontsize=8.5, fontweight="bold", color=fg, transform=ax.transAxes,
-                wrap=False)
-        ax.text(0.5, 0.28, f"{sign}{val:.2f}%", ha="center", va="center",
-                fontsize=11, color=fg, transform=ax.transAxes)
-        ax.set_xticks([])
-        ax.set_yticks([])
-        for spine in ax.spines.values():
-            spine.set_edgecolor("white")
-            spine.set_linewidth(2.5)
-
-    # Hide any unused cells in the last row
-    for idx in range(len(names), rows * cols):
-        r, c = divmod(idx, cols)
-        axs[r][c].set_visible(False)
-
-    fig.suptitle("S&P 500 Sectors — 1W Return", y=1.01,
-                 fontsize=11, fontweight="bold", color="#1a3a5c")
-    plt.tight_layout(pad=0.3)
-
-    buf = io.BytesIO()
-    fig.savefig(buf, format="png", dpi=150, bbox_inches="tight",
-                facecolor="white", edgecolor="none")
-    plt.close(fig)
-    buf.seek(0)
-    b64 = base64.b64encode(buf.read()).decode()
-    return (
-        '<h3 style="color:#1a3a5c;margin-top:24px">🗺️ Sector Heat Map</h3>'
-        f'<img src="data:image/png;base64,{b64}" '
-        f'style="width:100%;max-width:700px;border-radius:4px;display:block;" />'
-        '<p style="font-size:10px;color:#9ca3af;margin:4px 0 0">'
-        'Colour intensity scales with magnitude · green = positive · red = negative</p>'
-    )
 
 
 _COUNTRY_FLAGS = {
