@@ -468,9 +468,16 @@ def _calendar_section(this_week: List[Dict], next_week: List[Dict]) -> str:
             code     = e.get("countryCode", "")
             flag     = _COUNTRY_FLAGS.get(code, "🌐")
             country  = _COUNTRY_NAMES.get(code, code)
-            actual   = e.get("actual")    or "—"
-            forecast = e.get("consensus") or "—"
-            prev     = e.get("previous")  or "—"
+            unit     = e.get("unit") or ""
+            raw_act  = e.get("actual")
+            forecast = (f'{e["consensus"]}{unit}' if e.get("consensus") is not None else "—")
+            prev     = (f'{e["previous"]}{unit}'  if e.get("previous")  is not None else "—")
+            if raw_act is not None:
+                better = e.get("isBetterThanExpected")
+                color  = _GREEN if better is True else (_RED if better is False else _GRAY)
+                actual_cell = f'<span style="color:{color};font-weight:600">{raw_act}{unit}</span>'
+            else:
+                actual_cell = '<span style="color:#9ca3af">—</span>'
             t += (
                 f'<tr>'
                 f'<td style="{_TD_L}">{date_str}</td>'
@@ -478,7 +485,7 @@ def _calendar_section(this_week: List[Dict], next_week: List[Dict]) -> str:
                 f'<td style="{_TD_L}">{e.get("name", "")}</td>'
             )
             if show_actual:
-                t += f'<td style="{_TD}">{actual}</td>'
+                t += f'<td style="{_TD}">{actual_cell}</td>'
             t += (
                 f'<td style="{_TD}">{forecast}</td>'
                 f'<td style="{_TD}">{prev}</td>'
@@ -489,7 +496,7 @@ def _calendar_section(this_week: List[Dict], next_week: List[Dict]) -> str:
 
     html  = '<h3 style="color:#1a3a5c;margin-top:24px">📅 Economic Calendar</h3>'
     html += _table(this_week, "Last Week's Key Events",  show_actual=True)
-    html += _table(next_week, "This Week's Key Events",  show_actual=False)
+    html += _table(next_week, "This Week's Key Events",  show_actual=True)
     html += '<p style="font-size:10px;color:#9ca3af;margin:4px 0 0">High-impact events only · US, Euro Area, JP, CN, SG · Data via FXStreet</p>'
     return html
 
