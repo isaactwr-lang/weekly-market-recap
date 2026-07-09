@@ -66,6 +66,7 @@ METRIC INTERPRETATION GUIDE — apply these definitions precisely when interpret
 ATTRIBUTION FORMAT — always place the source citation at the END of the sentence, never at the start or middle:
 ✓ "The labor market showed signs of cooling. <span style="color:#9ca3af;font-size:11px">(T. Rowe Price)</span>"
 ✗ "<span style="color:#9ca3af;font-size:11px">(T. Rowe Price)</span> reported that the labor market showed signs of cooling."
+Only cite T. Rowe Price, Edward Jones, or Charles Schwab. Never cite "market data", "data", or any other label — the market data numbers are already shown in the tables and do not need attribution.
 Never use the source as the subject or actor of a sentence. Never write "as reported by", "according to", "as noted by", or any similar phrasing.
 
 NOTE ON SOURCE CONTENT: Sources do not always publish a standard weekly recap. They sometimes publish themed or strategic pieces (e.g. "Three trends to watch in H2", sector outlooks, macro regime shifts). When a source does this, extract and incorporate those insights — do not skip or downplay themed content. Use whatever each source actually provides.
